@@ -48,4 +48,14 @@ class User extends Authenticatable
     {
         return $this->role === 'player';
     }
+
+    public function inventories(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Inventory::class);
+    }
+
+    public function materials(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Material::class, 'inventories')->withPivot('quantity')->withTimestamps();
+    }
 }

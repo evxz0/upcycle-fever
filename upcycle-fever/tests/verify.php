@@ -130,8 +130,68 @@ $result = $gemini->generate('Berikan ide upcycling');
 it("GeminiService provides graceful static fallback when API key is empty (NFR-03)", !empty($result['text']));
 
 // -------------------------------------------------------------
-echo "\n7. Blade Views Compiling\n";
-$views = ['home', 'auth.login', 'auth.register', 'game.lobby', 'game.trial', 'admin.dashboard', 'admin.players'];
+echo "\n7. PBI-004: Waste Materials Catalog (Master Data Bahan Limbah)\n";
+$invService = new \App\Services\Game\InventoryService();
+$allMaterials = $invService->getMaterials();
+it("Master data materials populated (count >= 8)", $allMaterials->count() >= 8);
+
+$plasticItems = $invService->getMaterials(['category' => 'Plastik']);
+it("Category filtering returns only matching category", $plasticItems->isNotEmpty() && $plasticItems->every(fn($m) => $m->category === 'Plastik'));
+
+$searchItems = $invService->getMaterials(['search' => 'Aluminium']);
+it("Search by keyword finds target material", $searchItems->count() >= 1 && str_contains($searchItems->first()->name, 'Aluminium'));
+
+// Technical Task 1: Create material data with validation
+$createdMat = $invService->createMaterial([
+    'name'        => 'Gelas Plastik PP Bekas',
+    'category'    => 'Plastik',
+    'type'        => 'Anorganik',
+    'description' => 'Gelas minuman boba/kopi sekali pakai.',
+    'icon'        => '🥤',
+    'eco_impact'  => 18,
+]);
+it("Technical Task: Dapat menambah data sampah baru", $createdMat !== null && $createdMat->exists);
+it("Bahan limbah memiliki atribut lengkap (name, category, icon, eco_impact)", 
+    $createdMat->name === 'Gelas Plastik PP Bekas' && $createdMat->eco_impact === 18 && $createdMat->icon === '🥤');
+
+// -------------------------------------------------------------
+echo "\n8. PBI-004: Inventory & Workbench Slot Selection (Acceptance Criteria 1 & 2)\n";
+$playerInventory = $invService->getUserInventory($player->id);
+it("Pemain memiliki inventaris bahan limbah (AC 1)", $playerInventory->isNotEmpty());
+
+$firstInv = $playerInventory->first();
+$initialQty = $firstInv->quantity;
+
+// Simulasi AC 1: Pemain memindahkan bahan baku dari inventaris ke slot workbench
+$deducted = $invService->deductFromInventory($player->id, $firstInv->material_id, 1);
+it("Pemain dapat memindahkan bahan baku dari inventaris (stok berkurang) (AC 1)", $deducted);
+
+$updatedInv = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $firstInv->material_id)->first();
+it("Stok inventaris terverifikasi berkurang setelah dipindahkan", ($updatedInv?->quantity ?? 0) === ($initialQty - 1));
+
+// Simulasi AC 2: Slot workbench menampilkan preview bahan terpilih sebelum tindakan perakitan
+$workbenchValidation = $invService->validateWorkbench([$firstInv->material_id, $createdMat->id]);
+it("Slot workbench menampilkan preview bahan terpilih (AC 2)", 
+    $workbenchValidation['valid'] === true && 
+    $workbenchValidation['count'] === 2 && 
+    $workbenchValidation['total_eco_impact'] > 0);
+
+// Kembalikan stok inventaris
+$invService->addToInventory($player->id, $firstInv->material_id, 1);
+
+// -------------------------------------------------------------
+echo "\n9. Blade Views Compiling (including Materials Catalog & Workbench)\n";
+$views = [
+    'home', 
+    'auth.login', 
+    'auth.register', 
+    'game.lobby', 
+    'game.trial', 
+    'admin.dashboard', 
+    'admin.players',
+    'materials.index',
+    'game.workbench'
+];
 $viewsOk = true;
 foreach ($views as $v) {
     try {
@@ -142,6 +202,19 @@ foreach ($views as $v) {
             ]])->render();
         } elseif ($v === 'admin.players') {
             view($v, ['players' => User::paginate(5)])->render();
+        } elseif ($v === 'materials.index') {
+            view($v, [
+                'materials' => $allMaterials,
+                'categories' => ['Semua', 'Plastik', 'Kertas/Karton', 'Logam', 'Tekstil', 'Kaca'],
+                'category' => null,
+                'search' => null,
+            ])->render();
+        } elseif ($v === 'game.workbench') {
+            view($v, [
+                'inventory' => $playerInventory,
+                'tools' => \App\Models\Tool::all(),
+                'recipes' => \App\Models\Recipe::with(['tool', 'ingredients'])->get(),
+            ])->render();
         } else {
             view($v)->render();
         }
@@ -150,7 +223,93 @@ foreach ($views as $v) {
         echo "  [FAIL View: $v]: " . $e->getMessage() . "\n";
     }
 }
-it("All 7 Blade views render with Tailwind CSS & Alpine.js without errors", $viewsOk);
+it("All 9 Blade views (including materials catalog & workbench) render without errors", $viewsOk);
+
+// -------------------------------------------------------------
+echo "\n10. PBI-005: Recipe Engine & Tool Selection (Acceptance Criteria 1 & 2)\n";
+$craftingService = new \App\Services\Game\CraftingService($invService);
+
+$tools = $craftingService->getTools();
+it("Master data tools populated (count >= 4)", $tools->count() >= 4);
+
+$recipes = $craftingService->getRecipes();
+it("Master data recipes populated with tools and ingredients (count >= 5)", $recipes->count() >= 5);
+
+// Test tool & materials
+$scissors = \App\Models\Tool::where('slug', 'gunting-serbaguna')->first();
+$glueGun  = \App\Models\Tool::where('slug', 'lem-tembak-panas')->first();
+$botolPet = \App\Models\Material::where('slug', 'botol-plastik-pet')->first();
+$kain     = \App\Models\Material::where('slug', 'kain-perca-denim-katun')->first();
+$kardus   = \App\Models\Material::where('slug', 'kardus-karton-bekas')->first();
+
+it("Required test tools and materials exist", $scissors && $glueGun && $botolPet && $kain && $kardus);
+
+// Valid recipe formula: Botol PET + Kain Perca + Gunting => Pot Gantung
+$matchedRecipe = $craftingService->findMatchingRecipe([$botolPet->id, $kain->id], $scissors->id);
+it("Recipe engine matches valid combination: Botol PET + Kain Perca + Gunting", 
+    $matchedRecipe !== null && $matchedRecipe->slug === 'pot-gantung-tanaman-hias');
+
+// Invalid tool with same materials
+$wrongToolRecipe = $craftingService->findMatchingRecipe([$botolPet->id, $kain->id], $glueGun->id);
+it("Recipe engine rejects valid materials with WRONG tool (AC 2)", $wrongToolRecipe === null);
+
+// Incomplete materials with correct tool
+$incompleteRecipe = $craftingService->findMatchingRecipe([$botolPet->id], $scissors->id);
+it("Recipe engine rejects incomplete ingredients (AC 2)", $incompleteRecipe === null);
+
+// Give player plenty of materials for crafting test
+$invService->addToInventory($player->id, $botolPet->id, 5);
+$invService->addToInventory($player->id, $kain->id, 5);
+
+$qtyBotolBefore = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
+$qtyKainBefore  = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+
+// AC 2 Test: Failed crafting does NOT deduct inventory
+$failResult = $craftingService->craft($player->id, [$botolPet->id, $kardus->id], $scissors->id);
+$qtyBotolAfterFail = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
+$qtyKainAfterFail  = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+
+it("AC 2: Gagal merakit menghasilkan feedback kegagalan (success: false)", 
+    $failResult['success'] === false && !empty($failResult['message']));
+it("AC 2: Gagal merakit TIDAK mengurangi stok bahan inventaris pemain", 
+    $qtyBotolAfterFail === $qtyBotolBefore && $qtyKainAfterFail === $qtyKainBefore);
+
+// AC 1 Test: Successful crafting produces valid product and deducts inventory
+$successResult = $craftingService->craft($player->id, [$botolPet->id, $kain->id], $scissors->id);
+$qtyBotolAfterSuccess = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
+$qtyKainAfterSuccess  = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+
+it("AC 1: Berhasil merakit menghasilkan status produk valid (success: true)", 
+    $successResult['success'] === true && isset($successResult['product']['name']));
+it("AC 1: Produk memiliki detail lengkap (name, eco_points, coin_reward, tool_name)", 
+    $successResult['product']['name'] === 'Pot Gantung Tanaman Hias' &&
+    $successResult['product']['eco_points'] === 35 &&
+    $successResult['product']['coin_reward'] === 60 &&
+    $successResult['product']['tool_name'] === $scissors->name);
+it("AC 1: Bahan yang dirakit terpotong tepat dari inventaris pemain", 
+    $qtyBotolAfterSuccess === ($qtyBotolBefore - 1) && 
+    $qtyKainAfterSuccess === ($qtyKainBefore - 1));
+
+// Controller API endpoint check
+$craftController = new \App\Http\Controllers\CraftingController($craftingService);
+
+$apiReqValid = Request::create('/api/workbench/craft', 'POST', [
+    'material_ids' => [$botolPet->id, $kain->id],
+    'tool_id'      => $scissors->id,
+]);
+$apiReqValid->setUserResolver(fn() => $player);
+$responseValid = $craftController->apiCraft($apiReqValid);
+it("API POST /api/workbench/craft returns JSON response with status 200", 
+    $responseValid->getStatusCode() === 200 && $responseValid->getData(true)['success'] === true);
+
+$apiReqInvalid = Request::create('/api/workbench/craft', 'POST', [
+    'material_ids' => [$botolPet->id],
+    'tool_id'      => $scissors->id,
+]);
+$apiReqInvalid->setUserResolver(fn() => $player);
+$responseInvalid = $craftController->apiCraft($apiReqInvalid);
+it("API POST /api/workbench/craft handles invalid recipe gracefully with HTTP 422", 
+    $responseInvalid->getStatusCode() === 422 && $responseInvalid->getData(true)['success'] === false);
 
 // -------------------------------------------------------------
 echo "\n=======================================================\n";

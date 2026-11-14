@@ -2,10 +2,29 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Admin\AdminController;
+use App\Http\Controllers\MaterialController;
+use App\Http\Controllers\CraftingController;
 use Illuminate\Support\Facades\Route;
 
 // Home
 Route::get('/', fn() => view('home'))->name('home');
+
+// Katalog & Master Data Bahan Limbah (PBI-004)
+Route::get('/materials', [MaterialController::class, 'index'])->name('materials.index');
+
+// Meja Kerja (Workbench Crafting) (PBI-004 & PBI-005)
+Route::get('/game/workbench', [MaterialController::class, 'workbench'])->name('game.workbench');
+
+// API Endpoints Pengelolaan Bahan, Inventaris, dan Crafting (PBI-004 & PBI-005)
+Route::prefix('api')->name('api.')->group(function () {
+    Route::get('/materials', [MaterialController::class, 'apiIndex'])->name('materials.index');
+    Route::post('/materials', [MaterialController::class, 'apiStore'])->name('materials.store');
+    Route::get('/inventory', [MaterialController::class, 'apiInventory'])->name('inventory.index');
+    Route::post('/workbench/validate', [MaterialController::class, 'apiValidateWorkbench'])->name('workbench.validate');
+    Route::post('/workbench/craft', [CraftingController::class, 'apiCraft'])->name('workbench.craft');
+    Route::get('/recipes', [CraftingController::class, 'apiRecipes'])->name('recipes.index');
+    Route::get('/tools', [CraftingController::class, 'apiTools'])->name('tools.index');
+});
 
 // Auth
 Route::middleware('guest')->group(function () {
