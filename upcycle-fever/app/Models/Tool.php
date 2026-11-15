@@ -33,3 +33,4 @@ class Tool extends Model
         return $this->hasMany(Recipe::class);
     }
 }
+

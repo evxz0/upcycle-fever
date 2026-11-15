@@ -63,3 +63,4 @@ class CraftingController extends Controller
         ]);
     }
 }
+

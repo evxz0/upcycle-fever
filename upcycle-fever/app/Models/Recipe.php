@@ -51,3 +51,4 @@ class Recipe extends Model
             ->withTimestamps();
     }
 }
+

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\Game\InventoryService;
+use App\Services\Game\ServingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -73,11 +74,14 @@ class MaterialController extends Controller
      */
     public function workbench(): View
     {
-        $inventory = $this->inventoryService->getUserInventory(auth()->id());
-        $tools     = \App\Models\Tool::all();
-        $recipes   = \App\Models\Recipe::with(['tool', 'ingredients'])->get();
+        $inventory  = $this->inventoryService->getUserInventory(auth()->id());
+        $tools      = \App\Models\Tool::all();
+        $recipes    = \App\Models\Recipe::with(['tool', 'ingredients'])->get();
+        $servingSvc = app(ServingService::class);
+        $customers  = $servingSvc->getActiveCustomers(auth()->id());
+        $user       = auth()->user();
 
-        return view('game.workbench', compact('inventory', 'tools', 'recipes'));
+        return view('game.workbench', compact('inventory', 'tools', 'recipes', 'customers', 'user'));
     }
 
     /**

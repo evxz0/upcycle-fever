@@ -103,3 +103,4 @@ class RecipeSeeder extends Seeder
         }
     }
 }
+

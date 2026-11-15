@@ -45,3 +45,4 @@ class ToolSeeder extends Seeder
         }
     }
 }
+

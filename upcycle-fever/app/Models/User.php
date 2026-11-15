@@ -21,6 +21,9 @@ class User extends Authenticatable
         'is_active',
         'last_login_at',
         'last_seen_at',
+        'coins',
+        'eco_points',
+        'xp',
     ];
 
     protected $hidden = [
@@ -36,6 +39,9 @@ class User extends Authenticatable
             'last_login_at'     => 'datetime',
             'last_seen_at'      => 'datetime',
             'is_active'         => 'boolean',
+            'coins'             => 'integer',
+            'eco_points'        => 'integer',
+            'xp'                => 'integer',
         ];
     }
 

@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\MaterialController;
 use App\Http\Controllers\CraftingController;
+use App\Http\Controllers\ServingController;
 use Illuminate\Support\Facades\Route;
 
 // Home
@@ -24,6 +25,11 @@ Route::prefix('api')->name('api.')->group(function () {
     Route::post('/workbench/craft', [CraftingController::class, 'apiCraft'])->name('workbench.craft');
     Route::get('/recipes', [CraftingController::class, 'apiRecipes'])->name('recipes.index');
     Route::get('/tools', [CraftingController::class, 'apiTools'])->name('tools.index');
+
+    // Penyerahan Produk ke Pelanggan (PBI-006)
+    Route::get('/game/customers', [ServingController::class, 'apiCustomers'])->name('game.customers');
+    Route::post('/game/serve', [ServingController::class, 'apiServe'])->name('game.serve');
+    Route::post('/game/customers/expire', [ServingController::class, 'apiExpire'])->name('game.customers.expire');
 });
 
 // Auth

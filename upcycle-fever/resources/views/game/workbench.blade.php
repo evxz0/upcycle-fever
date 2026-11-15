@@ -27,6 +27,14 @@
     assemblyMessage: '',
     assemblyStatus: '',
 
+    // PBI-006: Pelanggan NPC & Meja Saji
+    customers: @js($customers ?? []),
+    servingPlates: [null, null],
+    playerCoins: {{ ($user->coins ?? 265) }},
+    playerEcoPoints: {{ ($user->eco_points ?? 10) }},
+    playerXp: {{ ($user->xp ?? 0) }},
+    rewardPopup: null,
+
     // Computed properties
     get filledSlotsCount() {
         return this.workbenchSlots.filter(s => s !== null).length;
@@ -44,6 +52,46 @@
         return this.tools.find(t => t.id === this.selectedToolId) || null;
     },
 
+    // PBI-006: Timer kesabaran pelanggan
+    init() {
+        this.startPatienceTimers();
+    },
+
+    startPatienceTimers() {
+        setInterval(() => {
+            this.customers.forEach(c => {
+                if (c.status === 'waiting' && c.patience_remaining > 0) {
+                    c.patience_remaining--;
+                    if (c.patience_remaining <= 0) {
+                        this.handleExpiredCustomer(c);
+                    }
+                }
+            });
+        }, 1000);
+    },
+
+    async handleExpiredCustomer(customer) {
+        try {
+            const res = await fetch('{{ route('api.game.customers.expire') }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content
+                },
+                body: JSON.stringify({ order_id: customer.id })
+            });
+            const data = await res.json();
+            if (data.success && data.new_customer) {
+                const idx = this.customers.findIndex(c => c.id === customer.id);
+                if (idx !== -1) this.customers[idx] = data.new_customer;
+            }
+            this.showNotification(`${customer.customer_name} pergi karena tidak sabar!`, 'warning');
+        } catch (e) {
+            customer.status = 'expired';
+        }
+    },
+
     // Aksi: Memindahkan bahan dari inventaris ke slot meja kerja yang kosong (PBI-004 AC 1)
     moveToWorkbench(item) {
         if (item.quantity <= 0) {
@@ -57,10 +105,7 @@
             return;
         }
 
-        // Kurangi stok di inventaris pemain (sementara di UI)
         item.quantity--;
-
-        // Masukkan ke slot meja kerja
         this.workbenchSlots[emptySlotIndex] = {
             id: item.id,
             name: item.name,
@@ -74,21 +119,17 @@
         this.showNotification(`${item.name} diletakkan di Slot #${emptySlotIndex + 1}!`, 'success');
     },
 
-    // Aksi: Mengembalikan bahan dari slot meja kerja ke inventaris
     removeFromWorkbench(slotIndex) {
         const slotItem = this.workbenchSlots[slotIndex];
         if (!slotItem) return;
 
         const invItem = this.inventory.find(i => i.id === slotItem.id);
-        if (invItem) {
-            invItem.quantity++;
-        }
+        if (invItem) invItem.quantity++;
 
         this.workbenchSlots[slotIndex] = null;
         this.showNotification(`${slotItem.name} dikembalikan ke inventaris.`, 'info');
     },
 
-    // Aksi: Kosongkan seluruh slot meja kerja
     clearWorkbench() {
         this.workbenchSlots.forEach((slotItem, idx) => {
             if (slotItem) {
@@ -100,7 +141,7 @@
         this.showNotification('Seluruh slot meja kerja telah dikosongkan.', 'info');
     },
 
-    // Aksi PBI-005: Eksekusi Perakitan Produk dengan Validasi Alat & Resep (AC 1 & AC 2)
+    // Aksi PBI-005: Eksekusi Perakitan Produk
     async executeCrafting() {
         if (!this.selectedToolId) {
             this.showNotification('Pilih salah satu alat kerja terlebih dahulu!', 'warning');
@@ -134,19 +175,77 @@
             const data = await res.json();
 
             if (res.ok && data.success) {
-                // AC 1: Status produk valid, tampilkan preview produk jadi
-                this.craftedProduct = data.product;
-                // Kosongkan slot meja kerja karena bahan sudah terpakai
+                // Produk selesai dirakit → letakkan di meja saji
+                const emptyPlate = this.servingPlates.findIndex(p => p === null);
+                if (emptyPlate !== -1) {
+                    this.servingPlates[emptyPlate] = data.product;
+                } else {
+                    this.craftedProduct = data.product;
+                }
                 this.workbenchSlots = [null, null, null, null];
                 this.showNotification(data.message, 'assembly-success');
             } else {
-                // AC 2: Jika salah, tampilkan pesan gagal, bahan tetap di meja kerja (tidak hangus)
                 this.showNotification(data.message || 'Kombinasi salah!', 'error');
             }
         } catch (e) {
             this.showNotification('Terjadi kesalahan jaringan saat perakitan.', 'error');
         } finally {
             this.isCrafting = false;
+        }
+    },
+
+    // PBI-006: Serahkan produk dari meja saji ke pelanggan
+    async serveToCustomer(plateIndex, customer) {
+        const product = this.servingPlates[plateIndex];
+        if (!product) {
+            this.showNotification('Tidak ada produk di piring ini!', 'warning');
+            return;
+        }
+
+        if (product.id !== customer.recipe_id) {
+            this.showNotification(`Produk ini bukan pesanan ${customer.customer_name}!`, 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch('{{ route('api.game.serve') }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content
+                },
+                body: JSON.stringify({
+                    order_id: customer.id,
+                    recipe_id: product.id
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                // Kosongkan piring saji
+                this.servingPlates[plateIndex] = null;
+
+                // Tampilkan popup reward
+                this.rewardPopup = data.reward;
+                this.playerCoins += data.reward.coins;
+                this.playerEcoPoints += data.reward.eco_points;
+                this.playerXp += data.reward.xp;
+                setTimeout(() => this.rewardPopup = null, 3000);
+
+                // AC 2: Ganti pelanggan dengan yang baru
+                if (data.new_customer) {
+                    const idx = this.customers.findIndex(c => c.id === customer.id);
+                    if (idx !== -1) this.customers[idx] = data.new_customer;
+                }
+
+                this.showNotification(data.message, 'assembly-success');
+            } else {
+                this.showNotification(data.message, 'error');
+            }
+        } catch (e) {
+            this.showNotification('Terjadi kesalahan jaringan.', 'error');
         }
     },
 
@@ -159,35 +258,128 @@
             }
         }, 5000);
     }
-}" class="space-y-8">
+}" class="space-y-6">
 
-    {{-- Header Section --}}
-    <div class="bg-gradient-to-r from-emerald-800 via-green-700 to-teal-800 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-        <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
-                <div class="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm text-green-100 px-3.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-3">
-                    <span>Feature F-02: Sistem Crafting & Resep (PBI-004 & PBI-005)</span>
+    {{-- ═══ TOP BAR: Status Pemain (Mockup Header) ═══ --}}
+    <div class="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-white rounded-2xl px-5 py-3 shadow-xl flex items-center justify-between flex-wrap gap-3">
+        <div class="flex items-center gap-3">
+            <a href="{{ route('game.lobby') }}" class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition">☰ MENU</a>
+            <span class="bg-blue-600 text-white text-xs font-black px-3 py-1 rounded-lg flex items-center gap-1">
+                👥 <span x-text="customers.filter(c => c.status === 'waiting').length">3</span>
+            </span>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="text-amber-400 font-black text-sm flex items-center gap-1">💰 <span x-text="playerCoins">265</span></span>
+            <span class="text-emerald-400 font-black text-sm flex items-center gap-1">🌱 <span x-text="playerEcoPoints">10</span></span>
+            <div class="flex items-center gap-1.5">
+                <span class="text-xs text-gray-400 font-bold">XP</span>
+                <div class="w-24 h-2.5 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                        :style="`width: ${Math.min(playerXp % 100, 100)}%`"></div>
                 </div>
-                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight flex items-center gap-3">
-                    <span>🛠️ Meja Kerja Perakitan</span>
-                </h1>
-                <p class="text-green-100 mt-2 text-sm sm:text-base max-w-2xl leading-relaxed">
-                    Pilih bahan baku limbah, tentukan alat kerja yang sesuai, dan rakit menjadi produk upcycle ramah lingkungan berdaya guna tinggi!
-                </p>
             </div>
-            <div class="flex flex-wrap items-center gap-3 shrink-0">
-                <button @click="showRecipeModal = true" class="bg-amber-400 hover:bg-amber-500 text-gray-900 font-bold px-4 py-2.5 rounded-xl text-sm shadow transition flex items-center gap-2">
-                    <span>📖</span> Buku Resep
-                </button>
-                <a href="{{ route('materials.index') }}" class="bg-white/20 hover:bg-white/30 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition flex items-center gap-2 border border-white/20">
-                    <span>📋</span> Katalog Sampah
-                </a>
-                <button 
-                    @click="clearWorkbench()" 
-                    :disabled="filledSlotsCount === 0"
-                    class="bg-red-500/80 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2.5 rounded-xl text-sm transition flex items-center gap-2">
-                    <span>🔄</span> Reset Meja
-                </button>
+        </div>
+    </div>
+
+    {{-- ═══ AREA 1: PELANGGAN NPC (3 Slot Counter) — PBI-006 ═══ --}}
+    <div class="bg-gradient-to-b from-emerald-50 to-white dark:from-gray-800 dark:to-gray-900 rounded-3xl p-6 shadow-sm border border-emerald-100 dark:border-gray-700">
+        <h2 class="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-4">
+            <span>👥 Antrian Pelanggan Studio</span>
+            <span class="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 px-2.5 py-0.5 rounded-full font-extrabold"
+                x-text="`${customers.filter(c => c.status === 'waiting').length} menunggu`"></span>
+        </h2>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <template x-for="customer in customers" :key="customer.id">
+                <div class="relative bg-white dark:bg-gray-800 rounded-2xl border-2 p-4 text-center transition-all"
+                    :class="customer.patience_remaining > 0 && customer.status === 'waiting'
+                        ? 'border-green-300 dark:border-green-700 shadow-md'
+                        : 'border-gray-200 dark:border-gray-700 opacity-50'">
+
+                    {{-- Balon Dialog Pesanan --}}
+                    <div class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-2.5 mb-3 shadow-sm relative">
+                        <div class="flex items-center justify-center gap-2">
+                            <span class="text-2xl" x-text="customer.recipe_icon"></span>
+                            <span class="text-xs font-bold text-gray-800 dark:text-white" x-text="customer.recipe_name"></span>
+                        </div>
+                        {{-- Arrow bawah --}}
+                        <div class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white dark:bg-gray-700 border-r border-b border-gray-200 dark:border-gray-600 rotate-45"></div>
+                    </div>
+
+                    {{-- Avatar NPC --}}
+                    <div class="text-4xl mb-1" x-text="customer.customer_avatar"></div>
+                    <h4 class="font-bold text-sm text-gray-800 dark:text-white" x-text="customer.customer_name"></h4>
+
+                    {{-- Patience Bar Vertikal (PBI-006 AC 1) --}}
+                    <div class="mt-3 mx-auto w-full max-w-[140px]">
+                        <div class="h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-1000"
+                                :class="{
+                                    'bg-green-500': (customer.patience_remaining / customer.patience_max) > 0.5,
+                                    'bg-amber-500': (customer.patience_remaining / customer.patience_max) > 0.25 && (customer.patience_remaining / customer.patience_max) <= 0.5,
+                                    'bg-red-500 animate-pulse': (customer.patience_remaining / customer.patience_max) <= 0.25
+                                }"
+                                :style="`width: ${(customer.patience_remaining / customer.patience_max) * 100}%`"></div>
+                        </div>
+                        <span class="text-[10px] font-mono font-bold mt-1 block"
+                            :class="customer.patience_remaining <= 10 ? 'text-red-600' : 'text-gray-500'"
+                            x-text="`${customer.patience_remaining}s`"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    {{-- ═══ AREA 2: MEJA SAJI (Serving Plates) — PBI-006 ═══ --}}
+    <div class="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
+        <h2 class="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-4">
+            <span>🍽️ Meja Saji (Serving Area)</span>
+            <span class="text-xs text-gray-500">Klik produk → klik pelanggan untuk menyerahkan</span>
+        </h2>
+
+        <div class="grid grid-cols-2 gap-4">
+            <template x-for="(plate, pIdx) in servingPlates" :key="pIdx">
+                <div class="min-h-[120px] rounded-2xl border-2 flex flex-col items-center justify-center p-4 transition-all"
+                    :class="plate ? 'border-amber-400 bg-amber-50/50 dark:bg-gray-700 shadow-sm' : 'border-dashed border-gray-300 dark:border-gray-600 bg-gray-50/30'">
+
+                    <template x-if="plate">
+                        <div class="text-center space-y-2">
+                            <div class="text-4xl" x-text="plate.output_icon"></div>
+                            <h4 class="font-bold text-xs text-gray-800 dark:text-white" x-text="plate.name"></h4>
+                            <div class="flex flex-wrap gap-1 justify-center">
+                                <template x-for="customer in customers.filter(c => c.status === 'waiting' && c.recipe_id === plate.id)" :key="customer.id">
+                                    <button
+                                        @click="serveToCustomer(pIdx, customer)"
+                                        class="bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1">
+                                        🤝 Sajikan ke <span x-text="customer.customer_name"></span>
+                                    </button>
+                                </template>
+                                <template x-if="customers.filter(c => c.status === 'waiting' && c.recipe_id === plate.id).length === 0">
+                                    <span class="text-[10px] text-gray-400 italic">Tidak ada pelanggan yang memesan ini</span>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="!plate">
+                        <div class="text-center text-gray-400">
+                            <div class="text-3xl mb-1">🍽️</div>
+                            <span class="text-xs">Piring Kosong</span>
+                            <span class="text-[10px] block text-gray-400">Rakit produk untuk mengisi</span>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    {{-- Reward Popup --}}
+    <div x-show="rewardPopup" x-transition class="fixed top-20 right-6 z-50 bg-gradient-to-br from-amber-400 to-amber-500 text-gray-900 rounded-2xl p-4 shadow-2xl max-w-xs animate-bounce">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl">🎉</span>
+            <div>
+                <span class="font-black text-sm block">Reward Diterima!</span>
+                <span class="text-xs font-bold" x-text="rewardPopup ? `💰 +${rewardPopup.coins} Koin  🌱 +${rewardPopup.eco_points} Eco` : ''"></span>
             </div>
         </div>
     </div>
@@ -212,90 +404,73 @@
         <button @click="assemblyMessage = ''" class="opacity-60 hover:opacity-100">✕</button>
     </div>
 
-    {{-- AREA UTAMA: MEJA KERJA + RAK ALAT KERJA (PBI-005) --}}
+    {{-- ═══ AREA 3: MEJA KERJA + RAK ALAT KERJA (PBI-004 & PBI-005) ═══ --}}
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
 
-        {{-- Kolom Kiri (3 Kolom): Meja Kerja Slots (PBI-004 & PBI-005) --}}
+        {{-- Kolom Kiri (3 Kolom): Meja Kerja Slots --}}
         <div class="lg:col-span-3 bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
             <div>
                 <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
                     <div>
                         <h2 class="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                            <span>Workbench Slots</span>
+                            <span>🛠️ Workbench Slots</span>
                             <span class="text-xs bg-green-100 dark:bg-green-900/60 text-green-800 dark:text-green-300 font-extrabold px-2.5 py-0.5 rounded-full"
                                 x-text="`${filledSlotsCount} / 4 Terisi`"></span>
                         </h2>
                         <p class="text-xs text-gray-500 mt-0.5">Preview bahan terpilih sebelum tindakan perakitan dijalankan.</p>
                     </div>
                     <div class="flex items-center gap-3">
-                        <span class="text-xs font-semibold text-gray-500">Total Eco-Impact Bahan:</span>
-                        <span class="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-black text-sm px-3 py-1 rounded-xl flex items-center gap-1">
-                            <span>🌱</span> +<span x-text="totalEcoPoints"></span> Poin
-                        </span>
+                        <button @click="showRecipeModal = true" class="bg-amber-400 hover:bg-amber-500 text-gray-900 font-bold px-3 py-1.5 rounded-xl text-xs shadow transition flex items-center gap-1">
+                            📖 Resep
+                        </button>
+                        <button
+                            @click="clearWorkbench()"
+                            :disabled="filledSlotsCount === 0"
+                            class="bg-red-500/80 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-3 py-1.5 rounded-xl text-xs transition flex items-center gap-1">
+                            🔄 Reset
+                        </button>
                     </div>
                 </div>
 
-                {{-- 4 Slots Meja Kerja Grid --}}
-                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                {{-- 4 Slots Grid --}}
+                <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                     <template x-for="(slot, index) in workbenchSlots" :key="index">
-                        <div class="relative min-h-[200px] rounded-2xl border-2 transition-all flex flex-col justify-between p-4"
-                            :class="slot 
-                                ? 'border-green-500 bg-gradient-to-b from-green-50 to-white dark:from-gray-700 dark:to-gray-800 shadow-md transform -translate-y-1' 
-                                : 'border-dashed border-gray-300 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/40 hover:border-green-400'">
-                            
-                            {{-- Slot Header --}}
+                        <div class="relative min-h-[160px] rounded-2xl border-2 transition-all flex flex-col justify-between p-4"
+                            :class="slot
+                                ? 'border-green-500 bg-gradient-to-b from-green-50 to-white dark:from-gray-700 dark:to-gray-800 shadow-md'
+                                : 'border-dashed border-gray-300 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/40'">
+
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-bold tracking-wider uppercase"
                                     :class="slot ? 'text-green-700 dark:text-green-400' : 'text-gray-400'"
                                     x-text="`Slot #${index + 1}`"></span>
 
                                 <template x-if="slot">
-                                    <button 
-                                        @click="removeFromWorkbench(index)" 
-                                        title="Keluarkan dari meja kerja"
-                                        class="w-6 h-6 bg-red-100 hover:bg-red-200 text-red-600 rounded-full flex items-center justify-center text-xs font-bold transition shadow-sm">
+                                    <button
+                                        @click="removeFromWorkbench(index)"
+                                        class="w-6 h-6 bg-red-100 hover:bg-red-200 text-red-600 rounded-full flex items-center justify-center text-xs font-bold transition">
                                         ✕
                                     </button>
                                 </template>
                             </div>
 
-                            {{-- Konten Slot (Preview Bahan Terpilih) --}}
                             <div class="my-auto text-center py-2">
                                 <template x-if="slot">
                                     <div class="space-y-1.5">
-                                        <div class="w-14 h-14 mx-auto bg-white dark:bg-gray-700 rounded-2xl shadow-inner border border-green-200 dark:border-green-800 flex items-center justify-center text-3xl">
+                                        <div class="w-12 h-12 mx-auto bg-white dark:bg-gray-700 rounded-2xl shadow-inner border border-green-200 dark:border-green-800 flex items-center justify-center text-2xl">
                                             <span x-text="slot.icon"></span>
                                         </div>
                                         <h4 class="font-bold text-gray-800 dark:text-white text-xs leading-snug line-clamp-1" x-text="slot.name"></h4>
-                                        <div class="flex items-center justify-center gap-1 flex-wrap">
-                                            <span class="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-green-200/60 dark:bg-green-900/60 text-green-800 dark:text-green-200"
-                                                x-text="slot.category"></span>
-                                            <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800"
-                                                x-text="`+${slot.eco_impact} Eco`"></span>
-                                        </div>
+                                        <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800"
+                                            x-text="`+${slot.eco_impact} Eco`"></span>
                                     </div>
                                 </template>
 
                                 <template x-if="!slot">
-                                    <div class="py-5 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-                                        <div class="w-10 h-10 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-lg mb-1.5">
-                                            ＋
-                                        </div>
-                                        <span class="text-xs font-medium">Slot Kosong</span>
-                                        <span class="text-[10px] text-gray-400">Pilih dari inventaris</span>
+                                    <div class="py-3 flex flex-col items-center text-gray-400">
+                                        <div class="w-10 h-10 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-lg mb-1">＋</div>
+                                        <span class="text-xs">Slot Kosong</span>
                                     </div>
-                                </template>
-                            </div>
-
-                            {{-- Slot Footer --}}
-                            <div class="pt-2 text-center border-t border-gray-100 dark:border-gray-700">
-                                <template x-if="slot">
-                                    <span class="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                        ✓ Bahan Terpasang
-                                    </span>
-                                </template>
-                                <template x-if="!slot">
-                                    <span class="text-[10px] text-gray-400 italic">Menunggu input</span>
                                 </template>
                             </div>
                         </div>
@@ -303,131 +478,108 @@
                 </div>
             </div>
 
-            {{-- Action Banner: Rakit Produk Sekarang (PBI-005) --}}
-            <div class="mt-6 p-4 sm:p-5 bg-gradient-to-r from-gray-50 to-green-50/50 dark:from-gray-700/50 dark:to-gray-800 rounded-2xl border border-green-100 dark:border-gray-600 flex flex-col sm:flex-row items-center justify-between gap-4">
+            {{-- Action Banner: Rakit Produk --}}
+            <div class="mt-6 p-4 bg-gradient-to-r from-gray-50 to-green-50/50 dark:from-gray-700/50 dark:to-gray-800 rounded-2xl border border-green-100 dark:border-gray-600 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
                     <div class="w-12 h-12 rounded-2xl bg-green-600 text-white flex items-center justify-center text-2xl font-bold shadow-md shrink-0">
                         <span x-text="selectedTool ? selectedTool.icon : '⚙️'"></span>
                     </div>
                     <div>
                         <h4 class="font-bold text-gray-800 dark:text-white text-sm flex items-center gap-2">
-                            <span>Perakitan Resep Crafting</span>
+                            <span>Perakitan Resep</span>
                             <template x-if="selectedTool">
                                 <span class="text-xs text-green-700 font-semibold bg-green-100 px-2 py-0.5 rounded-full" x-text="`Alat: ${selectedTool.name}`"></span>
                             </template>
                         </h4>
                         <p class="text-xs text-gray-500" x-show="!canAssemble">
                             <span x-show="filledSlotsCount === 0">Pilih minimal 1 bahan dan 1 alat kerja.</span>
-                            <span x-show="filledSlotsCount > 0 && !selectedToolId">Silakan pilih salah satu alat kerja di rak kanan ➔</span>
-                        </p>
-                        <p class="text-xs text-green-700 dark:text-green-300 font-medium" x-show="canAssemble">
-                            Kombinasi <strong x-text="filledSlotsCount"></strong> bahan dengan alat <strong x-text="selectedTool.name"></strong> siap dirakit!
+                            <span x-show="filledSlotsCount > 0 && !selectedToolId">Pilih alat kerja di rak kanan ➔</span>
                         </p>
                     </div>
                 </div>
 
-                <button 
+                <button
                     @click="executeCrafting()"
                     :disabled="!canAssemble || isCrafting"
                     class="w-full sm:w-auto bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-extrabold px-6 py-3 rounded-xl text-sm shadow-md transition flex items-center justify-center gap-2">
-                    <span x-show="!isCrafting">🔨 Rakit Produk Sekarang (Craft)</span>
-                    <span x-show="isCrafting">Memproses Perakitan...</span>
+                    <span x-show="!isCrafting">🔨 Rakit Produk (Craft)</span>
+                    <span x-show="isCrafting">Memproses...</span>
                 </button>
             </div>
         </div>
 
-        {{-- Kolom Kanan (1 Kolom): RAK ALAT KERJA / TOOLS SHELF (PBI-005) --}}
-        <div class="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
-            <div>
-                <h3 class="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-1">
-                    <span>🧰 Rak Perkakas</span>
-                </h3>
-                <p class="text-xs text-gray-500 mb-4">Pilih alat yang sesuai dengan resep yang ingin dirakit.</p>
+        {{-- Kolom Kanan: RAK ALAT KERJA --}}
+        <div class="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
+            <h3 class="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-4">
+                <span>🧰 Rak Perkakas</span>
+            </h3>
 
-                <div class="space-y-3">
-                    <template x-for="tool in tools" :key="tool.id">
-                        <div 
-                            @click="selectedToolId = tool.id"
-                            :class="selectedToolId === tool.id 
-                                ? 'border-green-600 bg-green-50/80 dark:bg-gray-700 ring-2 ring-green-500/30 shadow-sm' 
-                                : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 hover:bg-gray-50/50 dark:hover:bg-gray-700/50'"
-                            class="p-3.5 rounded-2xl border cursor-pointer transition flex items-center justify-between group">
-                            
-                            <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-xl bg-white dark:bg-gray-600 shadow-sm flex items-center justify-center text-xl border border-gray-100 dark:border-gray-500 group-hover:scale-105 transition"
-                                    x-text="tool.icon"></div>
-                                <div>
-                                    <h4 class="font-bold text-xs text-gray-800 dark:text-white" x-text="tool.name"></h4>
-                                    <span class="text-[10px] text-gray-500 block capitalize" x-text="`Tipe: ${tool.action_type}`"></span>
-                                </div>
-                            </div>
+            <div class="space-y-3">
+                <template x-for="tool in tools" :key="tool.id">
+                    <div
+                        @click="selectedToolId = tool.id"
+                        :class="selectedToolId === tool.id
+                            ? 'border-green-600 bg-green-50/80 dark:bg-gray-700 ring-2 ring-green-500/30 shadow-sm'
+                            : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'"
+                        class="p-3 rounded-2xl border cursor-pointer transition flex items-center justify-between">
 
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl bg-white dark:bg-gray-600 shadow-sm flex items-center justify-center text-xl border border-gray-100"
+                                x-text="tool.icon"></div>
                             <div>
-                                <span 
-                                    :class="selectedToolId === tool.id ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'"
-                                    class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition">
-                                    ✓
-                                </span>
+                                <h4 class="font-bold text-xs text-gray-800 dark:text-white" x-text="tool.name"></h4>
+                                <span class="text-[10px] text-gray-500 block" x-text="`Tipe: ${tool.action_type}`"></span>
                             </div>
                         </div>
-                    </template>
-                </div>
-            </div>
 
-            <div class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 text-center">
-                <button 
-                    @click="showRecipeModal = true"
-                    class="text-xs text-green-600 dark:text-green-400 font-bold hover:underline flex items-center justify-center gap-1 mx-auto">
-                    <span>🔍</span> Panduan Formula Resep
-                </button>
+                        <span
+                            :class="selectedToolId === tool.id ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'"
+                            class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition">
+                            ✓
+                        </span>
+                    </div>
+                </template>
             </div>
         </div>
 
     </div>
 
-    {{-- AREA 2: INVENTARIS PEMAIN (PBI-004) --}}
-    <div class="bg-white dark:bg-gray-800 rounded-3xl p-6 sm:p-8 shadow-sm border border-gray-100 dark:border-gray-700">
+    {{-- ═══ AREA 4: INVENTARIS PEMAIN ═══ --}}
+    <div class="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
-            <div>
-                <h2 class="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                    <span>🎒 Inventaris Bahan Sampah Pemain</span>
-                </h2>
-                <p class="text-xs text-gray-500 mt-0.5">Klik pada bahan sampah untuk meletakkannya ke slot meja kerja di atas.</p>
-            </div>
+            <h2 class="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                <span>🎒 Inventaris Bahan Sampah</span>
+            </h2>
             <span class="text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-xl font-medium">
                 💡 Klik bahan untuk memindahkan ke meja kerja
             </span>
         </div>
 
-        {{-- Grid Kartu Bahan Inventaris --}}
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             <template x-for="item in inventory" :key="item.id">
-                <div 
+                <div
                     @click="moveToWorkbench(item)"
-                    :class="item.quantity > 0 
-                        ? 'cursor-pointer hover:border-green-500 hover:shadow-lg hover:-translate-y-1 bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600' 
-                        : 'opacity-40 cursor-not-allowed bg-gray-100 dark:bg-gray-800 border-dashed border-gray-200'"
-                    class="rounded-2xl border p-3.5 transition-all flex flex-col justify-between text-center relative group">
+                    :class="item.quantity > 0
+                        ? 'cursor-pointer hover:border-green-500 hover:shadow-lg hover:-translate-y-1 bg-white dark:bg-gray-700 border-gray-200'
+                        : 'opacity-40 cursor-not-allowed bg-gray-100 border-dashed border-gray-200'"
+                    class="rounded-2xl border p-3 transition-all flex flex-col justify-between text-center relative">
 
-                    {{-- Badge Jumlah Stok (Quantity) --}}
                     <div class="absolute top-2 right-2">
-                        <span 
+                        <span
                             :class="item.quantity > 0 ? 'bg-amber-400 text-gray-900 font-black' : 'bg-gray-300 text-gray-600'"
                             class="text-[11px] px-2 py-0.5 rounded-full shadow-sm"
                             x-text="`x${item.quantity}`">
                         </span>
                     </div>
 
-                    {{-- Ikon & Nama --}}
                     <div class="py-2">
-                        <div class="text-3xl mb-1.5 group-hover:scale-110 transition transform" x-text="item.icon"></div>
+                        <div class="text-3xl mb-1" x-text="item.icon"></div>
                         <h4 class="font-bold text-xs text-gray-800 dark:text-white leading-tight line-clamp-2" x-text="item.name"></h4>
                         <span class="text-[10px] text-gray-400 block mt-1" x-text="item.category"></span>
                     </div>
 
-                    {{-- Tombol Aksi --}}
                     <div class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-600">
-                        <button 
+                        <button
                             type="button"
                             :disabled="item.quantity <= 0"
                             class="w-full text-[11px] font-bold py-1 px-2 rounded-lg transition"
@@ -440,67 +592,64 @@
         </div>
     </div>
 
-    {{-- MODAL SUKSES CRAFTING (CELEBRATION MODAL) --}}
+    {{-- MODAL SUKSES CRAFTING --}}
     <div x-show="craftedProduct" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
         <div @click.away="craftedProduct = null" class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4 border border-green-200">
-            <div class="w-20 h-20 mx-auto bg-green-100 dark:bg-green-900/60 rounded-3xl flex items-center justify-center text-5xl shadow-inner border border-green-300 animate-bounce">
+            <div class="w-20 h-20 mx-auto bg-green-100 rounded-3xl flex items-center justify-center text-5xl shadow-inner border border-green-300 animate-bounce">
                 <span x-text="craftedProduct ? craftedProduct.output_icon : '✨'"></span>
             </div>
 
             <div>
-                <span class="text-xs font-bold uppercase tracking-wider text-green-600 dark:text-green-400">Karya Upcycling Selesai!</span>
+                <span class="text-xs font-bold uppercase tracking-wider text-green-600">Produk Selesai!</span>
                 <h3 class="text-xl font-black text-gray-800 dark:text-white mt-1" x-text="craftedProduct ? craftedProduct.name : ''"></h3>
-                <p class="text-xs text-gray-500 mt-1" x-text="craftedProduct ? craftedProduct.description : ''"></p>
             </div>
 
-            <div class="grid grid-cols-2 gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-2xl border border-gray-100 dark:border-gray-600">
+            <div class="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
                 <div>
                     <span class="text-[10px] text-gray-400 block font-semibold">Reward Koin</span>
-                    <span class="text-sm font-black text-amber-500 flex items-center justify-center gap-1">
-                        💰 +<span x-text="craftedProduct ? craftedProduct.coin_reward : 0"></span>
-                    </span>
+                    <span class="text-sm font-black text-amber-500">💰 +<span x-text="craftedProduct ? craftedProduct.coin_reward : 0"></span></span>
                 </div>
                 <div>
                     <span class="text-[10px] text-gray-400 block font-semibold">Eco-Impact</span>
-                    <span class="text-sm font-black text-emerald-600 flex items-center justify-center gap-1">
-                        🌱 +<span x-text="craftedProduct ? craftedProduct.eco_points : 0"></span> Poin
-                    </span>
+                    <span class="text-sm font-black text-emerald-600">🌱 +<span x-text="craftedProduct ? craftedProduct.eco_points : 0"></span></span>
                 </div>
             </div>
 
-            <button 
+            <p class="text-xs text-gray-500">Produk ini siap diserahkan ke pelanggan apabila meja saji penuh.</p>
+
+            <button
                 @click="craftedProduct = null"
                 class="w-full bg-green-600 hover:bg-green-700 text-white font-extrabold py-3 rounded-xl text-sm transition shadow-md">
-                Lanjutkan Crafting Lainnya →
+                OK →
             </button>
         </div>
     </div>
 
-    {{-- MODAL BUKU RESEP (RECIPE GUIDE MODAL) --}}
+    {{-- MODAL BUKU RESEP --}}
     <div x-show="showRecipeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
         <div @click.away="showRecipeModal = false" class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-700">
                 <h3 class="text-lg font-black text-gray-800 dark:text-white flex items-center gap-2">
-                    <span>📖 Buku Panduan Resep Crafting</span>
+                    <span>📖 Panduan Resep</span>
                 </h3>
                 <button @click="showRecipeModal = false" class="text-gray-400 hover:text-gray-600">✕</button>
             </div>
 
             <div class="space-y-3">
                 <template x-for="r in recipes" :key="r.id">
-                    <div class="p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/30 flex items-center justify-between gap-4">
+                    <div class="p-3 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 flex items-center justify-between gap-4">
                         <div class="flex items-center gap-3">
-                            <div class="w-12 h-12 bg-white dark:bg-gray-600 rounded-2xl flex items-center justify-center text-2xl shadow-sm border border-gray-100"
+                            <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-xl shadow-sm border border-gray-100"
                                 x-text="r.output_icon"></div>
                             <div>
                                 <h4 class="font-bold text-xs text-gray-800 dark:text-white" x-text="r.name"></h4>
-                                <div class="flex items-center gap-1.5 mt-1 text-[11px] text-gray-600 dark:text-gray-300">
+                                <div class="flex items-center gap-1 mt-0.5 text-[11px] text-gray-600">
                                     <span class="font-semibold text-green-700">Bahan:</span>
                                     <template x-for="(ing, idx) in r.ingredients" :key="ing.id">
                                         <span x-text="`${ing.icon} ${ing.name}${idx < r.ingredients.length - 1 ? ' + ' : ''}`"></span>
                                     </template>
                                 </div>
-                                <span class="text-[10px] text-gray-500 block mt-0.5" x-text="`Alat: ${r.tool ? r.tool.name : '-'}`"></span>
+                                <span class="text-[10px] text-gray-500 block" x-text="`Alat: ${r.tool ? r.tool.name : '-'}`"></span>
                             </div>
                         </div>
 
@@ -512,10 +661,10 @@
                 </template>
             </div>
 
-            <button 
+            <button
                 @click="showRecipeModal = false"
-                class="w-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold py-2.5 rounded-xl text-xs transition">
-                Tutup Panduan
+                class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-xs transition">
+                Tutup
             </button>
         </div>
     </div>

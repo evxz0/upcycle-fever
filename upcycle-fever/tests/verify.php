@@ -312,6 +312,98 @@ it("API POST /api/workbench/craft handles invalid recipe gracefully with HTTP 42
     $responseInvalid->getStatusCode() === 422 && $responseInvalid->getData(true)['success'] === false);
 
 // -------------------------------------------------------------
+echo "\n11. PBI-006: Menyerahkan Produk ke Pelanggan (Acceptance Criteria 1 & 2)\n";
+$servingService = new \App\Services\Game\ServingService();
+
+// Generate active customers
+$customers = $servingService->getActiveCustomers($player->id);
+it("Customer queue spawns active customers (count = 3)", count($customers) === 3);
+
+$firstCustomer = $customers[0];
+it("Customer has complete attributes (id, name, avatar, recipe_id, patience)", 
+    !empty($firstCustomer['customer_name']) && 
+    !empty($firstCustomer['customer_avatar']) && 
+    !empty($firstCustomer['recipe_id']) && 
+    $firstCustomer['patience_max'] > 0);
+
+// AC 1: Negative test - serving wrong product
+$wrongRecipeId = ($firstCustomer['recipe_id'] === $matchedRecipe->id) ? ($matchedRecipe->id + 999) : 99999;
+$wrongServeResult = $servingService->serveProduct($player->id, $firstCustomer['id'], $wrongRecipeId);
+it("AC 1: Menyerahkan produk yang salah ditolak sistem (success: false)", 
+    $wrongServeResult['success'] === false && !empty($wrongServeResult['message']));
+
+// AC 1: Positive test - serving matching product before patience runs out
+$targetRecipeId = $firstCustomer['recipe_id'];
+$coinsBefore = $player->fresh()->coins;
+$ecoBefore   = $player->fresh()->eco_points;
+
+$serveSuccess = $servingService->serveProduct($player->id, $firstCustomer['id'], $targetRecipeId);
+it("AC 1: Produk jadi dapat diserahkan ke pelanggan sebelum batas kesabaran habis (success: true)", 
+    $serveSuccess['success'] === true && !empty($serveSuccess['reward']));
+
+$playerAfter = $player->fresh();
+it("AC 1: Penyerahan sukses menambah koin dan eco-points pemain", 
+    $playerAfter->coins > $coinsBefore && $playerAfter->eco_points > $ecoBefore);
+
+// AC 2: Order marked completed & customer replaced by new customer from queue
+$completedOrder = \App\Models\CustomerOrder::find($firstCustomer['id']);
+it("AC 2: Pesanan ditandai selesai (status: completed)", $completedOrder->status === 'completed');
+it("AC 2: Pelanggan meninggalkan antrean dan digantikan pelanggan berikutnya", 
+    !empty($serveSuccess['new_customer']) && 
+    $serveSuccess['new_customer']['id'] !== $firstCustomer['id'] &&
+    $serveSuccess['new_customer']['status'] === 'waiting');
+
+// Active customers count remains 3 after replacement
+$customersAfterServe = $servingService->getActiveCustomers($player->id);
+it("Slot antrean studio tetap terisi 3 pelanggan aktif", count($customersAfterServe) === 3);
+
+// AC 2 Expire test: customer leaves when patience runs out and slot is replaced
+$secondCustomer = $customersAfterServe[1];
+$expireResult = $servingService->expireCustomer($player->id, $secondCustomer['id']);
+it("AC 2: Pelanggan kehabisan waktu meninggalkan antrean dan digantikan baru", 
+    $expireResult['success'] === true && 
+    !empty($expireResult['new_customer']) && 
+    $expireResult['new_customer']['id'] !== $secondCustomer['id']);
+
+$expiredOrder = \App\Models\CustomerOrder::find($secondCustomer['id']);
+it("Status pelanggan yang ditinggal berubah menjadi expired", $expiredOrder->status === 'expired');
+
+// Controller API endpoint tests for PBI-006
+$servingController = new \App\Http\Controllers\ServingController($servingService);
+
+$apiCustomersReq = Request::create('/api/game/customers', 'GET');
+$apiCustomersReq->setUserResolver(fn() => $player);
+$resCustomers = $servingController->apiCustomers();
+it("API GET /api/game/customers returns 200 with active customers array", 
+    $resCustomers->getStatusCode() === 200 && count($resCustomers->getData(true)['data']) === 3);
+
+$activeCustNow = $resCustomers->getData(true)['data'][0];
+$apiServeReq = Request::create('/api/game/serve', 'POST', [
+    'order_id'  => $activeCustNow['id'],
+    'recipe_id' => $activeCustNow['recipe_id'],
+]);
+$apiServeReq->setUserResolver(fn() => $player);
+$resServe = $servingController->apiServe($apiServeReq);
+it("API POST /api/game/serve processes valid serving with HTTP 200", 
+    $resServe->getStatusCode() === 200 && $resServe->getData(true)['success'] === true);
+
+// Verify workbench blade view compiles with new customer variables
+$workbenchViewCompiled = true;
+try {
+    view('game.workbench', [
+        'inventory' => $playerInventory,
+        'tools'     => \App\Models\Tool::all(),
+        'recipes'   => \App\Models\Recipe::with(['tool', 'ingredients'])->get(),
+        'customers' => $servingService->getActiveCustomers($player->id),
+        'user'      => $player,
+    ])->render();
+} catch (\Throwable $e) {
+    $workbenchViewCompiled = false;
+    echo "  [FAIL Workbench View]: " . $e->getMessage() . "\n";
+}
+it("Workbench Blade view compiles and renders successfully with customers and serving plates", $workbenchViewCompiled);
+
+// -------------------------------------------------------------
 echo "\n=======================================================\n";
 echo "TOTAL: $pass PASSED, $fail FAILED\n";
 echo "STATUS: " . ($fail === 0 ? "ALL ACCEPTANCE CRITERIA MET" : "FAILURES DETECTED") . "\n";
