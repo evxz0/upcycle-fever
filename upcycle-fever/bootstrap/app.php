@@ -1,5 +1,12 @@
 <?php
 
+if (!enum_exists('SortDirection', false)) {
+    $stubPath = dirname(__DIR__).'/vendor/symfony/polyfill-php86/Resources/stubs/SortDirection.php';
+    if (file_exists($stubPath)) {
+        require_once $stubPath;
+    }
+}
+
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;

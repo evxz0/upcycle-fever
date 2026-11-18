@@ -2,9 +2,10 @@
 
 namespace App\Services\Game;
 
-use App\Models\Inventory;
+use App\Models\InventoryItem;
 use App\Models\Material;
-use Illuminate\Database\Eloquent\Collection;
+use App\Models\Recipe;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class InventoryService
@@ -50,33 +51,35 @@ class InventoryService
     }
 
     /**
-     * Mengambil daftar bahan di inventaris milik user
+     * Mengambil daftar bahan di inventaris milik user (PBI-008 AC 1 & 2)
+     * Mengembalikan item dengan quantity >= 0 agar item yang habis (stok == 0) tetap tampil dengan status disabled.
      */
     public function getUserInventory(?int $userId): Collection
     {
         if (!$userId) {
-            // Jika Guest / belum login, kembalikan sample materials untuk demo trial
+            // Jika Guest / belum login, kembalikan sample materials untuk demo trial (tanpa DB)
             return Material::where('is_active', true)->take(6)->get()->map(function ($material) {
                 return (object) [
                     'id'          => $material->id,
                     'material_id' => $material->id,
                     'quantity'    => 3,
+                    'item_type'   => 'material',
                     'material'    => $material,
                 ];
             });
         }
 
-        $items = Inventory::with('material')
+        $items = InventoryItem::with('material')
             ->where('user_id', $userId)
-            ->where('quantity', '>', 0)
+            ->where('item_type', 'material')
             ->get();
 
         // Jika user belum memiliki item inventaris sama sekali, seed starter pack otomatis
         if ($items->isEmpty()) {
             $this->seedStarterPack($userId);
-            $items = Inventory::with('material')
+            $items = InventoryItem::with('material')
                 ->where('user_id', $userId)
-                ->where('quantity', '>', 0)
+                ->where('item_type', 'material')
                 ->get();
         }
 
@@ -84,16 +87,30 @@ class InventoryService
     }
 
     /**
+     * Mengambil daftar produk jadi di inventaris milik user
+     */
+    public function getUserProducts(int $userId): Collection
+    {
+        return InventoryItem::with('recipe')
+            ->where('user_id', $userId)
+            ->where('item_type', 'product')
+            ->where('quantity', '>', 0)
+            ->get();
+    }
+
+    /**
      * Menambahkan starter pack inventaris untuk pemain baru
      */
     public function seedStarterPack(int $userId): void
     {
-        $starterMaterials = Material::where('is_active', true)->take(5)->get();
+        $starterMaterials = Material::where('is_active', true)->take(6)->get();
         foreach ($starterMaterials as $idx => $material) {
-            Inventory::firstOrCreate(
+            InventoryItem::firstOrCreate(
                 [
                     'user_id'     => $userId,
+                    'item_type'   => 'material',
                     'material_id' => $material->id,
+                    'recipe_id'   => null,
                 ],
                 [
                     'quantity'    => 3 + $idx,
@@ -103,27 +120,54 @@ class InventoryService
     }
 
     /**
-     * Tambah jumlah bahan ke inventaris pemain
+     * Tambah jumlah bahan/produk ke inventaris pemain
      */
-    public function addToInventory(int $userId, int $materialId, int $quantity = 1): Inventory
-    {
-        $inv = Inventory::firstOrNew([
+    public function addToInventory(
+        int $userId,
+        int $materialId,
+        int $quantity = 1,
+        string $itemType = 'material',
+        ?int $recipeId = null
+    ): InventoryItem {
+        $inv = InventoryItem::firstOrNew([
             'user_id'     => $userId,
+            'item_type'   => $itemType,
             'material_id' => $materialId,
+            'recipe_id'   => $recipeId,
         ]);
 
         $inv->quantity = ($inv->quantity ?? 0) + $quantity;
         $inv->save();
 
-        return $inv->load('material');
+        return $inv->load($itemType === 'material' ? 'material' : 'recipe');
     }
 
     /**
-     * Kurangi jumlah bahan dari inventaris pemain
+     * Tambah produk jadi ke inventaris pemain (PBI-009 AC 1)
+     */
+    public function addProductToInventory(int $userId, int $recipeId, int $quantity = 1): InventoryItem
+    {
+        $inv = InventoryItem::firstOrNew([
+            'user_id'     => $userId,
+            'item_type'   => 'product',
+            'material_id' => null,
+            'recipe_id'   => $recipeId,
+        ]);
+
+        $inv->quantity = ($inv->quantity ?? 0) + $quantity;
+        $inv->save();
+
+        return $inv->load('recipe');
+    }
+
+    /**
+     * Kurangi jumlah bahan dari inventaris pemain (PBI-009 AC 1)
+     * Tetap mempertahankan record dengan quantity = 0 agar status disabled ter-render di frontend.
      */
     public function deductFromInventory(int $userId, int $materialId, int $quantity = 1): bool
     {
-        $inv = Inventory::where('user_id', $userId)
+        $inv = InventoryItem::where('user_id', $userId)
+            ->where('item_type', 'material')
             ->where('material_id', $materialId)
             ->first();
 
@@ -131,14 +175,23 @@ class InventoryService
             return false;
         }
 
-        $inv->quantity -= $quantity;
-        if ($inv->quantity <= 0) {
-            $inv->delete();
-        } else {
-            $inv->save();
-        }
+        $inv->quantity = max(0, $inv->quantity - $quantity);
+        $inv->save();
 
         return true;
+    }
+
+    /**
+     * Validasi ketersediaan stok bahan di inventaris pemain (PBI-009 AC 2)
+     */
+    public function hasSufficientStock(int $userId, int $materialId, int $requiredQuantity): bool
+    {
+        $stock = InventoryItem::where('user_id', $userId)
+            ->where('item_type', 'material')
+            ->where('material_id', $materialId)
+            ->value('quantity') ?? 0;
+
+        return $stock >= $requiredQuantity;
     }
 
     /**
@@ -164,4 +217,3 @@ class InventoryService
         ];
     }
 }
-

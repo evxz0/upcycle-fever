@@ -2,10 +2,12 @@
 
 namespace App\Services\Game;
 
+use App\Models\InventoryItem;
 use App\Models\Material;
 use App\Models\Recipe;
 use App\Models\Tool;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class CraftingService
 {
@@ -53,7 +55,8 @@ class CraftingService
     }
 
     /**
-     * Memproses perakitan bahan di meja kerja (PBI-005)
+     * Memproses perakitan bahan di meja kerja (PBI-008 & PBI-009)
+     * Menggunakan DB::transaction() agar pengurangan bahan & penambahan produk jadi bersifat atomik.
      */
     public function craft(?int $userId, array $materialIds, int $toolId): array
     {
@@ -61,32 +64,58 @@ class CraftingService
         if (!$tool) {
             return [
                 'success' => false,
-                'message' => 'Pilih salah satu alat kerja terlebih dahulu sebelum merakit.',
+                'message' => 'Pilih salah satu perkakas kerja terlebih dahulu sebelum merakit.',
             ];
         }
 
         $recipe = $this->findMatchingRecipe($materialIds, $toolId);
 
-        // Acceptance Criteria 2: Jika salah, tampilkan umpan balik kegagalan & tidak kurangi stok
+        // PBI-009 AC 2 / PBI-005 AC 2: Jika kombinasi salah, sistem menolak dan tidak mengurangi stok
         if (!$recipe) {
             return [
                 'success' => false,
-                'message' => 'Kombinasi bahan sampah dan alat tidak cocok dengan formula resep manapun. Periksa kembali panduan resep!',
+                'message' => 'Kombinasi bahan sampah dan perkakas tidak cocok dengan formula resep manapun. Periksa kembali buku panduan resep!',
             ];
         }
 
-        // Acceptance Criteria 1: Jika cocok, produk valid dan potong bahan dari inventaris
+        // PBI-009 AC 1 & AC 2: Validasi stok dan transaksi atomik untuk pengguna terdaftar
         if ($userId) {
             $materialCounts = array_count_values($materialIds);
-            foreach ($materialCounts as $matId => $qty) {
-                $this->inventoryService->deductFromInventory($userId, $matId, $qty);
+
+            // Validasi kecukupan stok seluruh bahan terlebih dahulu (PBI-009 AC 2)
+            foreach ($materialCounts as $matId => $requiredQty) {
+                $currentStock = InventoryItem::where('user_id', $userId)
+                    ->where('item_type', 'material')
+                    ->where('material_id', $matId)
+                    ->value('quantity') ?? 0;
+
+                if ($currentStock < $requiredQty) {
+                    $mat = Material::find($matId);
+                    $matName = $mat ? $mat->name : "ID #{$matId}";
+                    return [
+                        'success' => false,
+                        'message' => "Gagal merakit: Stok bahan '{$matName}' tidak mencukupi di inventaris (tersisa: {$currentStock}, dibutuhkan: {$requiredQty}).",
+                    ];
+                }
             }
+
+            // Eksekusi atomik pengurangan stok & penambahan produk jadi (PBI-009 AC 1)
+            DB::transaction(function () use ($userId, $materialCounts, $recipe) {
+                foreach ($materialCounts as $matId => $qty) {
+                    $this->inventoryService->deductFromInventory($userId, $matId, $qty);
+                }
+                // Tambah produk jadi ke inventaris pemain
+                $this->inventoryService->addProductToInventory($userId, $recipe->id, 1);
+            });
         }
 
+        // Ambil stok inventaris terkini untuk pembaruan reaktif frontend tanpa reload penuh
+        $updatedInventory = $this->inventoryService->getUserInventory($userId);
+
         return [
-            'success' => true,
-            'message' => "Selamat! Anda berhasil merakit {$recipe->name}!",
-            'product' => [
+            'success'           => true,
+            'message'           => "Selamat! Anda berhasil merakit {$recipe->name}!",
+            'product'           => [
                 'id'          => $recipe->id,
                 'name'        => $recipe->name,
                 'output_icon' => $recipe->output_icon,
@@ -95,7 +124,7 @@ class CraftingService
                 'coin_reward' => $recipe->coin_reward,
                 'tool_name'   => $tool->name,
             ],
+            'updated_inventory' => $updatedInventory,
         ];
     }
 }
-

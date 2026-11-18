@@ -2,35 +2,12 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-
-class Inventory extends Model
+/**
+ * Class Inventory
+ *
+ * Backward-compatible alias for InventoryItem.
+ */
+class Inventory extends InventoryItem
 {
-    use HasFactory;
-
-    protected $fillable = [
-        'user_id',
-        'material_id',
-        'quantity',
-    ];
-
-    protected function casts(): array
-    {
-        return [
-            'quantity' => 'integer',
-        ];
-    }
-
-    public function user(): BelongsTo
-    {
-        return $this->belongsTo(User::class);
-    }
-
-    public function material(): BelongsTo
-    {
-        return $this->belongsTo(Material::class);
-    }
+    protected $table = 'inventory_items';
 }
-

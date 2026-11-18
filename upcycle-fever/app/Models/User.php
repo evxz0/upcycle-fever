@@ -55,13 +55,21 @@ class User extends Authenticatable
         return $this->role === 'player';
     }
 
+    public function inventoryItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(InventoryItem::class);
+    }
+
     public function inventories(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
-        return $this->hasMany(Inventory::class);
+        return $this->hasMany(InventoryItem::class);
     }
 
     public function materials(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
     {
-        return $this->belongsToMany(Material::class, 'inventories')->withPivot('quantity')->withTimestamps();
+        return $this->belongsToMany(Material::class, 'inventory_items')
+            ->wherePivot('item_type', 'material')
+            ->withPivot('quantity')
+            ->withTimestamps();
     }
 }

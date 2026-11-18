@@ -155,26 +155,31 @@ it("Bahan limbah memiliki atribut lengkap (name, category, icon, eco_impact)",
     $createdMat->name === 'Gelas Plastik PP Bekas' && $createdMat->eco_impact === 18 && $createdMat->icon === '🥤');
 
 // -------------------------------------------------------------
-echo "\n8. PBI-004: Inventory & Workbench Slot Selection (Acceptance Criteria 1 & 2)\n";
+echo "\n8. PBI-008: Real-Time Stock in inventory_items & Workbench Slots (AC 1 & 2)\n";
 $playerInventory = $invService->getUserInventory($player->id);
-it("Pemain memiliki inventaris bahan limbah (AC 1)", $playerInventory->isNotEmpty());
+it("PBI-008 AC 1: Pemain memiliki rak inventaris dari tabel inventory_items", $playerInventory->isNotEmpty());
 
 $firstInv = $playerInventory->first();
 $initialQty = $firstInv->quantity;
 
 // Simulasi AC 1: Pemain memindahkan bahan baku dari inventaris ke slot workbench
 $deducted = $invService->deductFromInventory($player->id, $firstInv->material_id, 1);
-it("Pemain dapat memindahkan bahan baku dari inventaris (stok berkurang) (AC 1)", $deducted);
+it("PBI-008 AC 1: Pemindahan bahan baku mengurangi kuantitas stok di inventory_items", $deducted);
 
-$updatedInv = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $firstInv->material_id)->first();
-it("Stok inventaris terverifikasi berkurang setelah dipindahkan", ($updatedInv?->quantity ?? 0) === ($initialQty - 1));
+$updatedInv = \App\Models\InventoryItem::where('user_id', $player->id)
+    ->where('item_type', 'material')
+    ->where('material_id', $firstInv->material_id)
+    ->first();
+it("PBI-008 AC 1: Stok di inventory_items terverifikasi berkurang secara real-time", ($updatedInv?->quantity ?? 0) === ($initialQty - 1));
 
-// Simulasi AC 2: Slot workbench menampilkan preview bahan terpilih sebelum tindakan perakitan
-$workbenchValidation = $invService->validateWorkbench([$firstInv->material_id, $createdMat->id]);
-it("Slot workbench menampilkan preview bahan terpilih (AC 2)", 
-    $workbenchValidation['valid'] === true && 
-    $workbenchValidation['count'] === 2 && 
-    $workbenchValidation['total_eco_impact'] > 0);
+// Simulasi PBI-008 AC 2: Bahan yang habis (stok == 0) dinonaktifkan
+$depletedMat = \App\Models\Material::where('is_active', true)->where('id', '!=', $firstInv->material_id)->first();
+$invService->addToInventory($player->id, $depletedMat->id, 0); // stok == 0
+$depletedRecord = \App\Models\InventoryItem::where('user_id', $player->id)
+    ->where('material_id', $depletedMat->id)
+    ->first();
+it("PBI-008 AC 2: Bahan dengan stok == 0 tersimpan di inventory_items dengan quantity = 0", 
+    $depletedRecord !== null && $depletedRecord->quantity === 0);
 
 // Kembalikan stok inventaris
 $invService->addToInventory($player->id, $firstInv->material_id, 1);
@@ -266,29 +271,49 @@ $qtyKainBefore  = \App\Models\Inventory::where('user_id', $player->id)->where('m
 
 // AC 2 Test: Failed crafting does NOT deduct inventory
 $failResult = $craftingService->craft($player->id, [$botolPet->id, $kardus->id], $scissors->id);
-$qtyBotolAfterFail = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
-$qtyKainAfterFail  = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+$qtyBotolAfterFail = \App\Models\InventoryItem::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
+$qtyKainAfterFail  = \App\Models\InventoryItem::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
 
-it("AC 2: Gagal merakit menghasilkan feedback kegagalan (success: false)", 
+it("PBI-009 AC 2: Gagal merakit kombinasi salah menghasilkan feedback kegagalan (success: false)", 
     $failResult['success'] === false && !empty($failResult['message']));
-it("AC 2: Gagal merakit TIDAK mengurangi stok bahan inventaris pemain", 
+it("PBI-009 AC 2: Gagal merakit TIDAK mengurangi stok bahan inventaris pemain", 
     $qtyBotolAfterFail === $qtyBotolBefore && $qtyKainAfterFail === $qtyKainBefore);
 
-// AC 1 Test: Successful crafting produces valid product and deducts inventory
-$successResult = $craftingService->craft($player->id, [$botolPet->id, $kain->id], $scissors->id);
-$qtyBotolAfterSuccess = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
-$qtyKainAfterSuccess  = \App\Models\Inventory::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+// AC 2 Test: Insufficient stock rejection
+// Buat user baru tanpa stok botol plastik
+$poorPlayer = $auth->register([
+    'name'     => 'Poor Player',
+    'email'    => 'poor_' . time() . '@test.com',
+    'password' => 'password123',
+]);
+$insufficientResult = $craftingService->craft($poorPlayer->id, [$botolPet->id, $kain->id], $scissors->id);
+it("PBI-009 AC 2: Sistem menolak perakitan jika stok bahan tidak mencukupi", 
+    $insufficientResult['success'] === false && str_contains($insufficientResult['message'], 'tidak mencukupi'));
 
-it("AC 1: Berhasil merakit menghasilkan status produk valid (success: true)", 
+// AC 1 Test: Successful crafting produces valid product, deducts materials, and adds product to inventory_items
+$productCountBefore = \App\Models\InventoryItem::where('user_id', $player->id)->where('item_type', 'product')->count();
+$successResult = $craftingService->craft($player->id, [$botolPet->id, $kain->id], $scissors->id);
+$qtyBotolAfterSuccess = \App\Models\InventoryItem::where('user_id', $player->id)->where('material_id', $botolPet->id)->value('quantity');
+$qtyKainAfterSuccess  = \App\Models\InventoryItem::where('user_id', $player->id)->where('material_id', $kain->id)->value('quantity');
+$productRecordAfter   = \App\Models\InventoryItem::where('user_id', $player->id)
+    ->where('item_type', 'product')
+    ->where('recipe_id', $matchedRecipe->id)
+    ->first();
+
+it("PBI-009 AC 1: Berhasil merakit menghasilkan status produk valid (success: true)", 
     $successResult['success'] === true && isset($successResult['product']['name']));
-it("AC 1: Produk memiliki detail lengkap (name, eco_points, coin_reward, tool_name)", 
+it("PBI-009 AC 1: Produk memiliki detail lengkap (name, eco_points, coin_reward, tool_name)", 
     $successResult['product']['name'] === 'Pot Gantung Tanaman Hias' &&
     $successResult['product']['eco_points'] === 35 &&
     $successResult['product']['coin_reward'] === 60 &&
     $successResult['product']['tool_name'] === $scissors->name);
-it("AC 1: Bahan yang dirakit terpotong tepat dari inventaris pemain", 
+it("PBI-009 AC 1: Bahan yang dirakit terpotong tepat dari tabel inventory_items", 
     $qtyBotolAfterSuccess === ($qtyBotolBefore - 1) && 
     $qtyKainAfterSuccess === ($qtyKainBefore - 1));
+it("PBI-009 AC 1: Produk jadi bertambah di tabel inventory_items (item_type: product)", 
+    $productRecordAfter !== null && $productRecordAfter->quantity >= 1);
+it("PBI-009 AC 1: Hasil crafting menyertakan updated_inventory untuk pembaruan reaktif frontend", 
+    !empty($successResult['updated_inventory']));
 
 // Controller API endpoint check
 $craftController = new \App\Http\Controllers\CraftingController($craftingService);

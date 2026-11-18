@@ -19,6 +19,7 @@
     recipes: @js($recipes ?? []),
     selectedToolId: null,
     isCrafting: false,
+    craftProgress: 0,
     showRecipeModal: false,
     craftedProduct: null,
 
@@ -141,10 +142,10 @@
         this.showNotification('Seluruh slot meja kerja telah dikosongkan.', 'info');
     },
 
-    // Aksi PBI-005: Eksekusi Perakitan Produk
+    // Aksi PBI-008 & PBI-009: Eksekusi Perakitan Produk dengan Validasi & Progress Bar
     async executeCrafting() {
         if (!this.selectedToolId) {
-            this.showNotification('Pilih salah satu alat kerja terlebih dahulu!', 'warning');
+            this.showNotification('Pilih salah satu perkakas kerja terlebih dahulu!', 'warning');
             return;
         }
 
@@ -158,6 +159,15 @@
         }
 
         this.isCrafting = true;
+        this.craftProgress = 15;
+
+        // Simulasi progres visual crafting
+        const progressTimer = setInterval(() => {
+            if (this.craftProgress < 85) {
+                this.craftProgress += 20;
+            }
+        }, 150);
+
         try {
             const res = await fetch('{{ route('api.workbench.craft') }}', {
                 method: 'POST',
@@ -173,6 +183,8 @@
             });
 
             const data = await res.json();
+            clearInterval(progressTimer);
+            this.craftProgress = 100;
 
             if (res.ok && data.success) {
                 // Produk selesai dirakit → letakkan di meja saji
@@ -182,15 +194,36 @@
                 } else {
                     this.craftedProduct = data.product;
                 }
+
+                // Kosongkan meja kerja
                 this.workbenchSlots = [null, null, null, null];
+
+                // PBI-009 AC 1: Pembaruan stok inventaris secara reaktif tanpa reload penuh
+                if (data.updated_inventory) {
+                    this.inventory = data.updated_inventory.map(item => ({
+                        id: item.material_id || item.id,
+                        name: item.material ? item.material.name : (item.name || 'Bahan'),
+                        category: item.material ? item.material.category : (item.category || 'Limbah'),
+                        icon: item.material ? item.material.icon : (item.icon || '📦'),
+                        eco_impact: item.material ? item.material.eco_impact : (item.eco_impact || 10),
+                        description: item.material ? item.material.description : (item.description || ''),
+                        quantity: item.quantity !== undefined ? item.quantity : 0
+                    }));
+                }
+
                 this.showNotification(data.message, 'assembly-success');
             } else {
-                this.showNotification(data.message || 'Kombinasi salah!', 'error');
+                // PBI-009 AC 2: Kembalikan item ke inventaris jika perakitan ditolak backend
+                this.showNotification(data.message || 'Kombinasi salah atau stok bahan tidak mencukupi!', 'error');
             }
         } catch (e) {
+            clearInterval(progressTimer);
             this.showNotification('Terjadi kesalahan jaringan saat perakitan.', 'error');
         } finally {
-            this.isCrafting = false;
+            setTimeout(() => {
+                this.isCrafting = false;
+                this.craftProgress = 0;
+            }, 300);
         }
     },
 
@@ -503,8 +536,22 @@
                     :disabled="!canAssemble || isCrafting"
                     class="w-full sm:w-auto bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-extrabold px-6 py-3 rounded-xl text-sm shadow-md transition flex items-center justify-center gap-2">
                     <span x-show="!isCrafting">🔨 Rakit Produk (Craft)</span>
-                    <span x-show="isCrafting">Memproses...</span>
+                    <span x-show="isCrafting" x-cloak>Sedang Merakit...</span>
                 </button>
+            </div>
+
+            {{-- Progress Bar Visual saat Crafting Berlangsung (PBI-008 Tech Task) --}}
+            <div x-show="isCrafting" x-transition class="mt-4 p-4 bg-emerald-50 dark:bg-gray-700/70 rounded-2xl border border-emerald-200 dark:border-gray-600 space-y-2">
+                <div class="flex justify-between items-center text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                    <span class="flex items-center gap-2">
+                        <span class="animate-spin text-sm">⚙️</span> Memproses perakitan bahan limbah di meja kerja...
+                    </span>
+                    <span class="font-mono text-emerald-700 dark:text-emerald-300 font-extrabold" x-text="`${craftProgress}%`"></span>
+                </div>
+                <div class="w-full bg-emerald-200/60 dark:bg-gray-600 h-2.5 rounded-full overflow-hidden">
+                    <div class="bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 h-full rounded-full transition-all duration-300"
+                        :style="`width: ${craftProgress}%`"></div>
+                </div>
             </div>
         </div>
 
@@ -561,14 +608,14 @@
                     @click="moveToWorkbench(item)"
                     :class="item.quantity > 0
                         ? 'cursor-pointer hover:border-green-500 hover:shadow-lg hover:-translate-y-1 bg-white dark:bg-gray-700 border-gray-200'
-                        : 'opacity-40 cursor-not-allowed bg-gray-100 border-dashed border-gray-200'"
+                        : 'opacity-40 cursor-not-allowed pointer-events-none bg-gray-100 dark:bg-gray-800 border-dashed border-gray-300 dark:border-gray-700'"
                     class="rounded-2xl border p-3 transition-all flex flex-col justify-between text-center relative">
 
                     <div class="absolute top-2 right-2">
                         <span
-                            :class="item.quantity > 0 ? 'bg-amber-400 text-gray-900 font-black' : 'bg-gray-300 text-gray-600'"
+                            :class="item.quantity > 0 ? 'bg-amber-400 text-gray-900 font-black' : 'bg-gray-300 text-gray-600 font-bold'"
                             class="text-[11px] px-2 py-0.5 rounded-full shadow-sm"
-                            x-text="`x${item.quantity}`">
+                            x-text="item.quantity > 0 ? `x${item.quantity}` : 'Habis'">
                         </span>
                     </div>
 
@@ -583,8 +630,8 @@
                             type="button"
                             :disabled="item.quantity <= 0"
                             class="w-full text-[11px] font-bold py-1 px-2 rounded-lg transition"
-                            :class="item.quantity > 0 ? 'bg-green-50 text-green-700 hover:bg-green-600 hover:text-white' : 'text-gray-400'">
-                            <span x-text="item.quantity > 0 ? '+ Pilih' : 'Habis'"></span>
+                            :class="item.quantity > 0 ? 'bg-green-50 text-green-700 hover:bg-green-600 hover:text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'">
+                            <span x-text="item.quantity > 0 ? '+ Pilih' : 'Stok Habis'"></span>
                         </button>
                     </div>
                 </div>
@@ -625,46 +672,59 @@
         </div>
     </div>
 
-    {{-- MODAL BUKU RESEP --}}
+    {{-- MODAL BUKU RESEP & PANDUAN EDUKASI UP CYCLING LOKAL (NON-AI) --}}
     <div x-show="showRecipeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
         <div @click.away="showRecipeModal = false" class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-700">
-                <h3 class="text-lg font-black text-gray-800 dark:text-white flex items-center gap-2">
-                    <span>📖 Panduan Resep</span>
-                </h3>
-                <button @click="showRecipeModal = false" class="text-gray-400 hover:text-gray-600">✕</button>
+                <div>
+                    <h3 class="text-lg font-black text-gray-800 dark:text-white flex items-center gap-2">
+                        <span>📖 Panduan Resep & Edukasi Upcycling</span>
+                    </h3>
+                    <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold">🌿 Mendukung SDG 12 Target 12.5 (Pengurangan Limbah)</span>
+                </div>
+                <button @click="showRecipeModal = false" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <div class="bg-emerald-50 dark:bg-gray-700/60 p-3 rounded-2xl border border-emerald-200 dark:border-gray-600 text-xs text-gray-600 dark:text-gray-300">
+                <span class="font-extrabold text-emerald-800 dark:text-emerald-300 block mb-0.5">💡 Tips Meja Kerja Studio:</span>
+                Pilih bahan yang sesuai formula resep di bawah dan pastikan perkakas yang cocok sudah aktif sebelum menekan tombol <b>Rakit Produk</b>.
             </div>
 
             <div class="space-y-3">
                 <template x-for="r in recipes" :key="r.id">
-                    <div class="p-3 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 flex items-center justify-between gap-4">
-                        <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-xl shadow-sm border border-gray-100"
-                                x-text="r.output_icon"></div>
-                            <div>
-                                <h4 class="font-bold text-xs text-gray-800 dark:text-white" x-text="r.name"></h4>
-                                <div class="flex items-center gap-1 mt-0.5 text-[11px] text-gray-600">
-                                    <span class="font-semibold text-green-700">Bahan:</span>
-                                    <template x-for="(ing, idx) in r.ingredients" :key="ing.id">
-                                        <span x-text="`${ing.icon} ${ing.name}${idx < r.ingredients.length - 1 ? ' + ' : ''}`"></span>
-                                    </template>
+                    <div class="p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/40 space-y-2">
+                        <div class="flex items-center justify-between gap-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-11 h-11 bg-white dark:bg-gray-600 rounded-xl flex items-center justify-center text-2xl shadow-sm border border-gray-100"
+                                    x-text="r.output_icon"></div>
+                                <div>
+                                    <h4 class="font-extrabold text-xs text-gray-800 dark:text-white" x-text="r.name"></h4>
+                                    <div class="flex items-center gap-1 mt-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                                        <span class="font-bold text-green-700 dark:text-green-400">Bahan:</span>
+                                        <template x-for="(ing, idx) in r.ingredients" :key="ing.id">
+                                            <span x-text="`${ing.icon} ${ing.name}${idx < r.ingredients.length - 1 ? ' + ' : ''}`"></span>
+                                        </template>
+                                    </div>
+                                    <span class="text-[10px] text-gray-500 dark:text-gray-400 block" x-text="`Alat: ${r.tool ? r.tool.name : '-'}`"></span>
                                 </div>
-                                <span class="text-[10px] text-gray-500 block" x-text="`Alat: ${r.tool ? r.tool.name : '-'}`"></span>
+                            </div>
+
+                            <div class="text-right shrink-0">
+                                <span class="text-xs font-black text-emerald-600 block" x-text="`+${r.eco_points} Eco`"></span>
+                                <span class="text-[11px] font-bold text-amber-500 block" x-text="`💰 ${r.coin_reward}`"></span>
                             </div>
                         </div>
-
-                        <div class="text-right shrink-0">
-                            <span class="text-xs font-black text-emerald-600 block" x-text="`+${r.eco_points} Eco`"></span>
-                            <span class="text-[11px] font-bold text-amber-500 block" x-text="`💰 ${r.coin_reward}`"></span>
-                        </div>
+                        <template x-if="r.description">
+                            <p class="text-[11px] text-gray-500 dark:text-gray-300 bg-white dark:bg-gray-800 p-2 rounded-xl border border-gray-100 dark:border-gray-700" x-text="`Fakta: ${r.description}`"></p>
+                        </template>
                     </div>
                 </template>
             </div>
 
             <button
                 @click="showRecipeModal = false"
-                class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-xs transition">
-                Tutup
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-extrabold py-2.5 rounded-xl text-xs transition shadow">
+                Tutup Panduan
             </button>
         </div>
     </div>
