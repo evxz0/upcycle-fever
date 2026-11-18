@@ -22,6 +22,9 @@
                 <a href="{{ route('materials.index') }}" class="hover:text-green-200 transition {{ request()->routeIs('materials.*') ? 'text-amber-300 font-bold' : '' }}">
                     📋 Katalog Bahan
                 </a>
+                <a href="{{ route('inventory.warehouse') }}" class="hover:text-green-200 transition {{ request()->routeIs('inventory.warehouse') ? 'text-amber-300 font-bold' : '' }}">
+                    ♻️ Pemilahan Sampah
+                </a>
                 <a href="{{ route('game.workbench') }}" class="hover:text-green-200 transition {{ request()->routeIs('game.workbench') ? 'text-amber-300 font-bold' : '' }}">
                     🛠️ Meja Kerja
                 </a>
@@ -30,6 +33,7 @@
         <div class="flex items-center gap-4 text-sm">
             <div class="sm:hidden flex items-center gap-2">
                 <a href="{{ route('materials.index') }}" class="text-xs bg-green-800 px-2 py-1 rounded">Katalog</a>
+                <a href="{{ route('inventory.warehouse') }}" class="text-xs bg-green-800 px-2 py-1 rounded">Gudang</a>
                 <a href="{{ route('game.workbench') }}" class="text-xs bg-green-800 px-2 py-1 rounded">Meja Kerja</a>
             </div>
             @auth
@@ -38,6 +42,7 @@
                     <a href="{{ route('admin.dashboard') }}" class="hover:underline">Dashboard Admin</a>
                 @else
                     <a href="{{ route('game.lobby') }}" class="hover:underline">Lobi Game</a>
+                    <a href="{{ route('profile.show') }}" class="hover:underline text-amber-200" title="Profil Saya">👤</a>
                 @endif
                 <form method="POST" action="{{ route('logout') }}" class="inline">
                     @csrf
@@ -50,7 +55,7 @@
         </div>
     </nav>
 
-    <main class="max-w-6xl mx-auto px-4 py-8">
+    <main class="{{ request()->routeIs('game.*') ? 'h-[calc(100vh-53px)] overflow-hidden p-2 sm:p-3' : 'max-w-6xl mx-auto px-4 py-8' }}">
         @if(session('success'))
             <div class="mb-4 bg-green-100 border border-green-300 text-green-800 px-4 py-2 rounded">{{ session('success') }}</div>
         @endif

@@ -20,7 +20,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'role' => \App\Http\Middleware\RoleMiddleware::class,
+            'role'        => \App\Http\Middleware\RoleMiddleware::class,
+            'guest.trial' => \App\Http\Middleware\EnsureGuestTrialAllowed::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

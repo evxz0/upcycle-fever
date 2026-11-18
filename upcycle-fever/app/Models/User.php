@@ -24,6 +24,7 @@ class User extends Authenticatable
         'coins',
         'eco_points',
         'xp',
+        'preferences',
     ];
 
     protected $hidden = [
@@ -42,6 +43,7 @@ class User extends Authenticatable
             'coins'             => 'integer',
             'eco_points'        => 'integer',
             'xp'                => 'integer',
+            'preferences'       => 'array',   // JSON column untuk avatar, sound_enabled, graphic_quality
         ];
     }
 

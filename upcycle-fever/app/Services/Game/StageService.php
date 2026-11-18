@@ -33,7 +33,7 @@ class StageService
             if ($existing->remainingSeconds() > 0) {
                 $this->syncExpiredOrders($existing);
                 if (CustomerOrder::where('stage_session_id', $existing->id)->where('status', 'waiting')->count() === 0) {
-                    $this->servingService->spawnCustomer($userId, 0, $existing->id);
+                    $this->servingService->spawnCustomer($userId, 0, $existing->id, $existing->stage_number);
                 }
 
                 return $existing->fresh();
@@ -77,7 +77,7 @@ class StageService
         ]);
 
         // Munculkan 1 pelanggan awal agar pemain langsung memiliki pesanan saat stage mulai
-        $this->servingService->spawnCustomer($userId, 0, $stage->id);
+        $this->servingService->spawnCustomer($userId, 0, $stage->id, $stageNumber);
 
         return $stage;
     }
@@ -165,7 +165,7 @@ class StageService
             ];
         }
 
-        $newOrder = $this->servingService->spawnCustomer($userId, $freeSlot, $stage->id);
+        $newOrder = $this->servingService->spawnCustomer($userId, $freeSlot, $stage->id, $stage->stage_number);
 
         return [
             'success'           => true,

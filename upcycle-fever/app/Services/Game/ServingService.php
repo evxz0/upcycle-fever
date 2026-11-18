@@ -6,6 +6,7 @@ use App\Models\CustomerOrder;
 use App\Models\Recipe;
 use App\Models\StageSession;
 use App\Models\User;
+use App\Services\Ai\GeminiService;
 use Illuminate\Support\Facades\DB;
 
 class ServingService
@@ -102,24 +103,43 @@ class ServingService
     }
 
     /**
-     * Spawn pelanggan baru acak di slot tertentu dengan skema timer kesabaran.
+     * Spawn pelanggan baru menggunakan Gemini API (F-01 Dynamic Order).
+     * Fallback otomatis ke resep statis dari DB jika API gagal/timeout.
      */
-    public function spawnCustomer(?int $userId, int $slotIndex, ?int $stageSessionId = null): ?CustomerOrder
+    public function spawnCustomer(?int $userId, int $slotIndex, ?int $stageSessionId = null, int $stageNumber = 1): ?CustomerOrder
     {
-        $recipe = Recipe::inRandomOrder()->first();
-        if (!$recipe) return null;
+        // Ambil semua resep dari DB untuk dikirim ke Gemini sebagai pilihan
+        $recipes = Recipe::select('id', 'name', 'output_icon as icon')->get()->toArray();
 
-        $persona = $this->customers[array_rand($this->customers)];
-        $patience = rand(45, 75);
+        if (empty($recipes)) return null;
+
+        // F-01: Generate pesanan dinamis via Gemini (auto-fallback ke statis jika gagal)
+        $gemini  = app(GeminiService::class);
+        $orderData = $gemini->generateOrder($stageNumber, $recipes);
+
+        // Pastikan recipe_id valid
+        $validIds = array_column($recipes, 'id');
+        $recipeId = in_array($orderData['recipe_id'] ?? null, $validIds)
+            ? $orderData['recipe_id']
+            : $validIds[array_rand($validIds)];
+
+        // Skala patience berdasarkan tingkat kesulitan
+        $difficulty = $orderData['difficulty'] ?? 'mudah';
+        $patience = match($difficulty) {
+            'sulit'  => rand(30, 50),
+            'sedang' => rand(45, 65),
+            default  => rand(55, 80),
+        };
+
         $now = now();
 
         return CustomerOrder::create([
             'user_id'            => $userId,
             'stage_session_id'   => $stageSessionId,
             'slot_index'         => $slotIndex,
-            'customer_name'      => $persona['name'],
-            'customer_avatar'    => $persona['avatar'],
-            'recipe_id'          => $recipe->id,
+            'customer_name'      => $orderData['customer_name'],
+            'customer_avatar'    => $orderData['customer_avatar'],
+            'recipe_id'          => $recipeId,
             'patience_max'       => $patience,
             'patience_remaining' => $patience,
             'spawned_at'         => $now,

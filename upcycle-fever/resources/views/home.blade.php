@@ -19,7 +19,7 @@
             @endif
         @else
             <a href="{{ route('guest.start') }}" class="bg-amber-400 hover:bg-amber-500 text-gray-900 font-bold px-8 py-3 rounded-xl text-lg transition shadow-md flex items-center justify-center gap-2">
-                <span>🎮</span> Mode Uji Coba (Trial)
+                <span>🎮</span> Play as Guest
             </a>
             <a href="{{ route('register') }}" class="bg-green-600 hover:bg-green-700 text-white font-bold px-8 py-3 rounded-xl text-lg transition">
                 Daftar & Main Penuh
