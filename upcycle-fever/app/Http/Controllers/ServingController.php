@@ -26,19 +26,21 @@ class ServingController extends Controller
     }
 
     /**
-     * POST /api/game/serve — Serahkan produk ke pelanggan (PBI-006).
+     * POST /api/game/serve — Serahkan produk ke pelanggan (PBI-006, PBI-011 & PBI-012).
      */
     public function apiServe(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id'  => 'required|integer|exists:customer_orders,id',
-            'recipe_id' => 'required|integer|exists:recipes,id',
+            'order_id'                  => 'required|integer|exists:customer_orders,id',
+            'recipe_id'                 => 'required|integer|exists:recipes,id',
+            'client_patience_remaining' => 'nullable|numeric|min:0',
         ]);
 
         $result = $this->servingService->serveProduct(
             auth()->id(),
             $validated['order_id'],
-            $validated['recipe_id']
+            $validated['recipe_id'],
+            isset($validated['client_patience_remaining']) ? (float) $validated['client_patience_remaining'] : null
         );
 
         return response()->json($result, $result['success'] ? 200 : 422);

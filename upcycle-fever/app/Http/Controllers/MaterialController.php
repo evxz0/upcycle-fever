@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\Game\InventoryService;
 use App\Services\Game\ServingService;
+use App\Services\Game\StageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -78,10 +79,13 @@ class MaterialController extends Controller
         $tools      = \App\Models\Tool::all();
         $recipes    = \App\Models\Recipe::with(['tool', 'ingredients'])->get();
         $servingSvc = app(ServingService::class);
-        $customers  = $servingSvc->getActiveCustomers(auth()->id());
+        $stageSvc   = app(StageService::class);
+        $stageModel = $stageSvc->getOrStartStage(auth()->id());
+        $stage      = $stageSvc->formatStageState($stageModel);
+        $customers  = $servingSvc->getStageCustomers($stageModel);
         $user       = auth()->user();
 
-        return view('game.workbench', compact('inventory', 'tools', 'recipes', 'customers', 'user'));
+        return view('game.workbench', compact('inventory', 'tools', 'recipes', 'customers', 'stage', 'user'));
     }
 
     /**

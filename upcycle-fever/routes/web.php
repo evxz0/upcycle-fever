@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\MaterialController;
 use App\Http\Controllers\CraftingController;
 use App\Http\Controllers\ServingController;
+use App\Http\Controllers\StageController;
 use Illuminate\Support\Facades\Route;
 
 // Home
@@ -30,6 +31,11 @@ Route::prefix('api')->name('api.')->group(function () {
     Route::get('/game/customers', [ServingController::class, 'apiCustomers'])->name('game.customers');
     Route::post('/game/serve', [ServingController::class, 'apiServe'])->name('game.serve');
     Route::post('/game/customers/expire', [ServingController::class, 'apiExpire'])->name('game.customers.expire');
+
+    // Sistem Manajemen Waktu Stage & Spawn Pesanan Berkala (PBI-010)
+    Route::post('/game/stage/start', [StageController::class, 'apiStart'])->name('game.stage.start');
+    Route::post('/game/stage/spawn', [StageController::class, 'apiSpawnOrder'])->name('game.stage.spawn');
+    Route::post('/game/stage/finish', [StageController::class, 'apiFinish'])->name('game.stage.finish');
 });
 
 // Auth
