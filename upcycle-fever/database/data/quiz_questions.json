@@ -1,0 +1,146 @@
+[
+    {
+        "id": 1,
+        "question": "Apa kepanjangan dari SDG 12?",
+        "options": [
+            "Responsible Consumption and Production",
+            "Reduced Carbon Pollution",
+            "Recycling and Clean Production",
+            "Renewable Circular Products"
+        ],
+        "correct": 0,
+        "explanation": "SDG 12 adalah 'Responsible Consumption and Production' — mendorong pola konsumsi dan produksi yang bertanggung jawab untuk mengurangi limbah dan menjaga sumber daya alam."
+    },
+    {
+        "id": 2,
+        "question": "Berapa lama waktu yang dibutuhkan botol plastik PET untuk terurai di alam?",
+        "options": [
+            "10-20 tahun",
+            "50-100 tahun",
+            "450 tahun atau lebih",
+            "1.000 tahun atau lebih"
+        ],
+        "correct": 2,
+        "explanation": "Botol plastik PET membutuhkan sekitar 450 tahun untuk terurai secara alami. Itulah mengapa daur ulang dan upcycling sangat penting!"
+    },
+    {
+        "id": 3,
+        "question": "Prinsip mana yang BUKAN bagian dari konsep 3R dalam pengelolaan limbah?",
+        "options": [
+            "Reduce (Mengurangi)",
+            "Reuse (Menggunakan kembali)",
+            "Recycle (Mendaur ulang)",
+            "Return (Mengembalikan)"
+        ],
+        "correct": 3,
+        "explanation": "Konsep 3R terdiri dari Reduce, Reuse, dan Recycle. 'Return' bukan bagian dari 3R, meskipun mengembalikan kemasan juga merupakan praktik yang baik."
+    },
+    {
+        "id": 4,
+        "question": "Upcycling berbeda dari recycling karena...",
+        "options": [
+            "Upcycling mengubah limbah menjadi produk bernilai lebih tinggi",
+            "Upcycling hanya bisa dilakukan di pabrik besar",
+            "Upcycling membutuhkan lebih banyak energi",
+            "Upcycling hanya untuk bahan logam"
+        ],
+        "correct": 0,
+        "explanation": "Upcycling mengubah limbah menjadi produk dengan nilai atau kualitas lebih tinggi daripada bahan aslinya, sedangkan recycling sering kali menghasilkan produk dengan kualitas yang sama atau lebih rendah."
+    },
+    {
+        "id": 5,
+        "question": "Berapa persen energi yang dihemat dengan mendaur ulang aluminium dibanding memproduksi dari bauksit?",
+        "options": [
+            "25%",
+            "50%",
+            "75%",
+            "95%"
+        ],
+        "correct": 3,
+        "explanation": "Mendaur ulang aluminium menghemat hingga 95% energi dibandingkan memproduksi aluminium baru dari bijih bauksit. Satu kaleng daur ulang bisa menghemat energi untuk menonton TV selama 3 jam!"
+    },
+    {
+        "id": 6,
+        "question": "Industri fesyen menyumbang berapa persen jejak karbon global?",
+        "options": [
+            "Sekitar 2%",
+            "Sekitar 5%",
+            "Sekitar 10%",
+            "Sekitar 25%"
+        ],
+        "correct": 2,
+        "explanation": "Industri fesyen menyumbang sekitar 10% emisi karbon global. Dengan mengupcycle kain perca, kita ikut mengurangi dampak lingkungan industri tekstil!"
+    },
+    {
+        "id": 7,
+        "question": "Apa yang dimaksud dengan 'ekonomi sirkular' dalam konteks SDG 12?",
+        "options": [
+            "Ekonomi yang hanya menggunakan energi terbarukan",
+            "Sistem di mana produk dirancang untuk digunakan kembali, diperbaiki, dan didaur ulang",
+            "Ekonomi yang melarang semua produk plastik",
+            "Sistem perdagangan internasional yang adil"
+        ],
+        "correct": 1,
+        "explanation": "Ekonomi sirkular adalah sistem di mana produk dan bahan dirancang untuk bertahan lama, digunakan kembali, diperbaiki, dan didaur ulang — meminimalkan limbah dan memaksimalkan nilai sumber daya."
+    },
+    {
+        "id": 8,
+        "question": "Berapa banyak pohon yang diselamatkan dengan mendaur ulang 1 ton kertas/karton?",
+        "options": [
+            "5 pohon",
+            "10 pohon",
+            "17 pohon",
+            "30 pohon"
+        ],
+        "correct": 2,
+        "explanation": "Mendaur ulang 1 ton kertas dapat menyelamatkan sekitar 17 pohon dan menghemat 4.000 kWh energi listrik. Kardus bekas paket belanja online pun bisa jadi bahan upcycling yang bernilai!"
+    },
+    {
+        "id": 9,
+        "question": "Mana yang merupakan contoh upcycling?",
+        "options": [
+            "Membakar sampah plastik untuk energi",
+            "Mengubah botol bekas menjadi pot tanaman self-watering",
+            "Membuang limbah ke tempat pembuangan akhir (TPA)",
+            "Mencuci botol bekas lalu membuangnya"
+        ],
+        "correct": 1,
+        "explanation": "Mengubah botol bekas menjadi pot tanaman self-watering adalah contoh upcycling — memberikan nilai baru yang lebih tinggi pada bahan yang sebelumnya dianggap sampah."
+    },
+    {
+        "id": 10,
+        "question": "Menurut SDG 12, apa target global pengurangan limbah makanan per kapita di tingkat ritel dan konsumen pada 2030?",
+        "options": [
+            "Dikurangi 25%",
+            "Dikurangi 50%",
+            "Dikurangi 75%",
+            "Dihilangkan sepenuhnya"
+        ],
+        "correct": 1,
+        "explanation": "SDG 12.3 menargetkan pengurangan 50% limbah makanan per kapita di tingkat ritel dan konsumen pada tahun 2030, serta mengurangi kehilangan pangan di sepanjang rantai produksi dan pasokan."
+    },
+    {
+        "id": 11,
+        "question": "Apa dampak utama sampah plastik di lautan?",
+        "options": [
+            "Membuat air laut lebih bersih",
+            "Mencemari ekosistem laut dan membahayakan biota laut",
+            "Tidak berdampak karena plastik mengapung",
+            "Membantu menyaring polutan laut"
+        ],
+        "correct": 1,
+        "explanation": "Sampah plastik di lautan mencemari ekosistem, membunuh satwa laut yang menelannya, dan terurai menjadi mikroplastik yang masuk ke rantai makanan. Diperkirakan 8 juta ton plastik masuk ke laut setiap tahun."
+    },
+    {
+        "id": 12,
+        "question": "Bahan mana yang paling lama terurai secara alami di lingkungan?",
+        "options": [
+            "Kertas koran",
+            "Kulit pisang",
+            "Kaca (gelas/botol)",
+            "Daun kering"
+        ],
+        "correct": 2,
+        "explanation": "Kaca membutuhkan waktu hingga 1 juta tahun untuk terurai di lingkungan! Maka dari itu, kaca sangat penting untuk didaur ulang atau diupcycle menjadi produk baru yang bermanfaat."
+    }
+]

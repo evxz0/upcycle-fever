@@ -57,6 +57,28 @@
     stageEcoEarned: {{ $stage['eco_points_earned'] ?? 0 }},
     stageXpEarned: {{ $stage['xp_earned'] ?? 0 }},
 
+    // F-05: State Kuis Pelanggan Spesial (PBI-013, PBI-014, PBI-015)
+    specialCustomer: null,
+    showQuizModal: false,
+    currentQuiz: null,
+    quizAnswered: false,
+    quizResult: null,
+    usedQuizIds: [],
+    specialCustomerSpawned: false,
+    quizConfig: {
+        spawnChance: 0.30,
+        spawnMinPercent: 30,
+        spawnMaxPercent: 70,
+        bonusDuration: 10,
+        bonusFactor: 0.5,
+        penaltyDuration: 5,
+        penaltyFactor: 1.5,
+    },
+    patienceModifier: 1.0,
+    patienceModifierTimer: null,
+    patienceModifierType: null,
+    quizToast: null,
+
     // Computed properties
     get filledSlotsCount() {
         return this.workbenchSlots.filter(s => s !== null).length;
@@ -334,6 +356,130 @@
         this.stageTimeRemaining = 0;
         this.stageRecap = recap;
         if (this.stageTimerInterval) clearInterval(this.stageTimerInterval);
+        // F-05: Bersihkan state kuis saat stage selesai
+        this.specialCustomer = null;
+        this.showQuizModal = false;
+        this.currentQuiz = null;
+        this.quizAnswered = false;
+        this.quizResult = null;
+        this.specialCustomerSpawned = false;
+        this.patienceModifier = 1.0;
+        if (this.patienceModifierTimer) {
+            clearTimeout(this.patienceModifierTimer);
+            this.patienceModifierTimer = null;
+        }
+        this.patienceModifierType = null;
+    },
+
+    checkSpawnSpecialCustomer() {
+        if (this.specialCustomer || this.specialCustomerSpawned || this.stageEnded) return;
+
+        const progressPercent = ((this.stageDuration - this.stageTimeRemaining) / Math.max(1, this.stageDuration)) * 100;
+
+        if (progressPercent >= this.quizConfig.spawnMinPercent && progressPercent <= this.quizConfig.spawnMaxPercent) {
+            if (Math.random() <= this.quizConfig.spawnChance) {
+                this.specialCustomer = {
+                    name: 'Duta SDG 12',
+                    avatar: '🌟',
+                    title: 'Pelanggan Spesial',
+                    badge: 'Kuis Edukasi',
+                    dialog: 'Halo! Jawab kuis SDG 12 dariku untuk keuntungan permainan!'
+                };
+                this.specialCustomerSpawned = true;
+                this.showNotification('🌟 Pelanggan Spesial muncul! Ketuk untuk mengikuti Kuis SDG 12!', 'info');
+            }
+        }
+    },
+
+    async openQuizModal() {
+        if (this.showQuizModal || this.stageEnded) return;
+        if (!this.specialCustomer) return;
+
+        try {
+            const res = await fetch(`{{ route('api.game.quiz.question') }}?used_ids=${encodeURIComponent(JSON.stringify(this.usedQuizIds))}`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content
+                }
+            });
+            const data = await res.json();
+            if (data.success && data.question) {
+                this.currentQuiz = data.question;
+                this.usedQuizIds.push(data.question.id);
+                this.quizAnswered = false;
+                this.quizResult = null;
+                this.showQuizModal = true;
+            } else {
+                this.showNotification('Belum ada soal kuis yang dapat dimuat.', 'warning');
+            }
+        } catch (e) {
+            this.showNotification('Gagal memuat kuis SDG 12.', 'error');
+        }
+    },
+
+    async submitQuizAnswer(optionIdx) {
+        if (this.quizAnswered || !this.currentQuiz) return;
+        this.quizAnswered = true;
+
+        try {
+            const res = await fetch('{{ route('api.game.quiz.answer') }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content
+                },
+                body: JSON.stringify({
+                    question_id: this.currentQuiz.id,
+                    answer_index: optionIdx
+                })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                this.quizResult = {
+                    selected: optionIdx,
+                    is_correct: data.is_correct,
+                    correct_index: data.correct_index,
+                    explanation: data.explanation
+                };
+
+                const mod = data.modifier;
+                this.applyPatienceModifier(mod.factor, mod.duration, mod.type);
+
+                if (data.is_correct) {
+                    this.showNotification('🎉 Benar! Penurunan kesabaran melambat 50% selama 10 detik!', 'success');
+                } else {
+                    this.showNotification('⚠️ Kurang tepat! Penurunan kesabaran dipercepat 1.5x selama 5 detik!', 'warning');
+                }
+            }
+        } catch (e) {
+            this.showNotification('Terjadi gangguan saat memvalidasi jawaban.', 'error');
+        }
+    },
+
+    applyPatienceModifier(factor, duration, type) {
+        this.patienceModifier = factor;
+        this.patienceModifierType = type;
+
+        if (this.patienceModifierTimer) {
+            clearTimeout(this.patienceModifierTimer);
+            this.patienceModifierTimer = null;
+        }
+
+        this.patienceModifierTimer = setTimeout(() => {
+            this.patienceModifier = 1.0;
+            this.patienceModifierType = null;
+            this.patienceModifierTimer = null;
+        }, duration * 1000);
+    },
+
+    closeQuizModal() {
+        this.showQuizModal = false;
+        this.specialCustomer = null;
+        this.currentQuiz = null;
+        this.quizResult = null;
+        this.quizAnswered = false;
     },
 
     async restartStage() {
@@ -361,16 +507,24 @@
         this.stageTimerInterval = setInterval(() => {
             if (this.stageEnded) return;
 
+            // Jika modal kuis terbuka, jeda sementara penyusutan timer/kesabaran
+            if (this.showQuizModal) return;
+
             if (this.stageTimeRemaining > 0) {
                 this.stageTimeRemaining = Math.max(0, this.stageTimeRemaining - 1);
             } else {
                 this.finishStageOnBackend();
             }
 
+            // Periksa peluang spawn pelanggan spesial di tengah durasi stage
+            if (!this.specialCustomer && !this.specialCustomerSpawned) {
+                this.checkSpawnSpecialCustomer();
+            }
+
             this.customers.forEach(customer => {
                 if (customer.status === 'waiting') {
                     if (customer.patience_remaining > 0) {
-                        customer.patience_remaining = Math.max(0, customer.patience_remaining - 1);
+                        customer.patience_remaining = Math.max(0, customer.patience_remaining - (1 * this.patienceModifier));
                     } else {
                         this.notifyExpiredOrder(customer);
                     }
@@ -391,7 +545,7 @@
     <div class="bg-gray-900 text-white rounded-2xl px-3 py-1.5 shadow-md flex items-center justify-between shrink-0">
         <div class="flex items-center gap-3">
             <span class="bg-emerald-600 text-white text-xs font-black px-2.5 py-0.5 rounded-lg" x-text="`Stage ${stageNumber}`">Stage 1</span>
-            <div class="flex items-center gap-1 font-mono text-xs font-black"
+            <div data-testid="stage-countdown-timer" class="flex items-center gap-1 font-mono text-xs font-black"
                 :class="stageTimeRemaining <= 15 ? 'text-red-400 animate-pulse' : 'text-emerald-300'">
                 <span>⏱️</span> <span x-text="formattedStageTime">02:00</span>
             </div>
@@ -411,6 +565,13 @@
                 }" x-text="assemblyMessage"></span>
         </template>
 
+        {{-- Indikator Modifier Kesabaran Kuis --}}
+        <template x-if="patienceModifierType">
+            <span class="text-[10px] font-black px-2 py-0.5 rounded-full shadow animate-pulse"
+                :class="patienceModifierType === 'bonus' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'"
+                x-text="patienceModifierType === 'bonus' ? '🛡️ Bonus Kuis: Kesabaran -50%!' : '⚡ Penalti Kuis: Kesabaran +1.5x!'"></span>
+        </template>
+
         <div class="flex items-center gap-3 text-xs font-black">
             <span class="text-amber-400">💰 <span x-text="playerCoins"></span></span>
             <span class="text-emerald-400">🌱 <span x-text="playerEcoPoints"></span></span>
@@ -423,10 +584,37 @@
         </div>
     </div>
 
+    {{-- BANNER PELANGGAN SPESIAL KUIS SDG 12 (PBI-013) --}}
+    <template x-if="specialCustomer">
+        <div @click="openQuizModal()"
+            data-testid="special-customer-card"
+            class="bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-gray-900 rounded-2xl px-4 py-2 shadow-lg shadow-amber-400/40 border-2 border-yellow-200 ring-4 ring-amber-300/50 cursor-pointer flex items-center justify-between transition-all hover:scale-[1.01] shrink-0">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl filter drop-shadow">🌟</span>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-[9px] font-black uppercase tracking-wider bg-black/10 px-2 py-0.5 rounded-full" x-text="specialCustomer.badge">Kuis Edukasi</span>
+                        <span class="text-xs font-black" x-text="specialCustomer.name">Duta SDG 12</span>
+                    </div>
+                    <p class="text-[11px] font-bold text-gray-800" x-text="specialCustomer.dialog"></p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] font-black bg-gray-900 text-white px-2.5 py-1 rounded-xl shadow animate-pulse">
+                    👉 Ketuk untuk Kuis!
+                </span>
+            </div>
+        </div>
+    </template>
+
     {{-- BARIS 2: ANTREAN PELANGGAN (3 SLOTS) & MEJA SAJI --}}
     <div class="grid grid-cols-1 md:grid-cols-12 gap-2 shrink-0">
         {{-- Antrean 3 Pelanggan Counter --}}
-        <div class="md:col-span-8 grid grid-cols-3 gap-2">
+        <div class="md:col-span-8">
+            <div class="flex items-center justify-between mb-1 px-1">
+                <span class="text-[10px] font-black uppercase text-gray-400">Antrian Pelanggan Studio</span>
+            </div>
+            <div class="grid grid-cols-3 gap-2">
             <template x-for="(customer, slotIdx) in customerSlots" :key="slotIdx">
                 <div class="bg-white dark:bg-gray-800 rounded-2xl p-2 border-2 transition-all flex flex-col justify-between relative h-28"
                     :class="{
@@ -459,11 +647,11 @@
                                 </div>
                             </div>
 
-                            {{-- Patience Bar Horizontal --}}
-                            <div class="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
-                                <div class="h-full rounded-full transition-all duration-1000"
+                            {{-- Patience Bar Horizontal & Vertical Compatibility --}}
+                            <div data-testid="patience-bar-vertical" class="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                <div data-testid="patience-bar-fill" class="h-full rounded-full transition-all duration-1000 bg-green-500"
                                     :class="patiencePercent(customer) > 50 ? 'bg-green-500' : (patiencePercent(customer) > 25 ? 'bg-amber-500' : 'bg-red-500 animate-pulse')"
-                                    :style="`width: ${patiencePercent(customer)}%`"></div>
+                                    :style="`width: ${patiencePercent(customer)}%; height: ${patiencePercent(customer)}%`"></div>
                             </div>
                         </div>
                     </template>
@@ -476,6 +664,7 @@
                     </template>
                 </div>
             </template>
+            </div>
         </div>
 
         {{-- Meja Saji (2 Piring) --}}
@@ -513,7 +702,7 @@
         <div class="md:col-span-8 bg-white dark:bg-gray-800 rounded-2xl p-3 shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
             <div class="flex items-center justify-between mb-1 pb-1 border-b border-gray-100 dark:border-gray-700">
                 <span class="text-xs font-black text-gray-800 dark:text-white flex items-center gap-1.5">
-                    <span>🛠️</span> Meja Kerja (Workbench)
+                    <span>🛠️</span> Meja Kerja Perakitan (Workbench Slots)
                     <span class="text-[9px] bg-green-100 text-green-800 px-1.5 py-0.2 rounded font-bold" x-text="`${filledSlotsCount}/4`"></span>
                 </span>
                 <button @click="clearWorkbench()" :disabled="filledSlotsCount === 0" class="text-[10px] text-gray-400 hover:text-red-500 disabled:opacity-30 font-bold">
@@ -585,7 +774,7 @@
     <div class="bg-white dark:bg-gray-800 rounded-2xl p-2.5 shadow-sm border border-gray-100 dark:border-gray-700 shrink-0">
         <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-100 dark:border-gray-700">
             <span class="text-xs font-black text-gray-800 dark:text-white flex items-center gap-1.5">
-                <span>🎒</span> Rak Inventaris Bahan Sampah
+                <span>🎒</span> Inventaris Bahan Sampah Pemain
             </span>
             <span class="text-[10px] text-gray-400">💡 Klik bahan untuk meletakkan ke slot meja kerja</span>
         </div>
@@ -601,6 +790,87 @@
                         <span class="text-[9px] text-gray-400 block" x-text="item.category"></span>
                     </div>
                     <span :class="item.quantity > 0 ? 'bg-amber-400 text-gray-900' : 'bg-gray-200 text-gray-400'" class="text-[9px] font-black px-1.5 py-0.5 rounded-md shrink-0" x-text="item.quantity > 0 ? `x${item.quantity}` : '0'"></span>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    {{-- MODAL KUIS SDG 12 (PBI-013, PBI-014, PBI-015) --}}
+    <div x-show="showQuizModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div @click.away="quizAnswered ? closeQuizModal() : null"
+            data-testid="quiz-modal"
+            class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-lg w-full p-6 space-y-4 border-2 border-amber-400">
+            
+            {{-- Header Modal --}}
+            <div class="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                    <span class="text-3xl">🌟</span>
+                    <div>
+                        <h3 class="text-base font-black text-gray-800 dark:text-white">Kuis Spesial SDG 12</h3>
+                        <span class="text-[10px] text-amber-600 font-bold">Konsumsi & Produksi Bertanggung Jawab</span>
+                    </div>
+                </div>
+                <button x-show="quizAnswered" @click="closeQuizModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            {{-- Pertanyaan & Pilihan --}}
+            <template x-if="currentQuiz">
+                <div class="space-y-4">
+                    <div class="bg-amber-50 dark:bg-gray-700 p-3.5 rounded-2xl border border-amber-200 dark:border-gray-600">
+                        <p class="text-xs sm:text-sm font-black text-gray-800 dark:text-white leading-relaxed" x-text="currentQuiz.question"></p>
+                    </div>
+
+                    {{-- Opsi Pilihan Ganda (3-4 opsi) --}}
+                    <div class="space-y-2">
+                        <template x-for="(option, idx) in currentQuiz.options" :key="idx">
+                            <button @click="submitQuizAnswer(idx)"
+                                :disabled="quizAnswered"
+                                class="w-full text-left p-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-between"
+                                :class="{
+                                    'border-gray-200 dark:border-gray-600 hover:border-amber-400 hover:bg-amber-50/50 dark:hover:bg-gray-700 cursor-pointer': !quizAnswered,
+                                    'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/40 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-400': quizAnswered && quizResult && idx === quizResult.correct_index,
+                                    'border-red-500 bg-red-50 dark:bg-red-900/40 text-red-900 dark:text-red-200 ring-2 ring-red-400': quizAnswered && quizResult && !quizResult.is_correct && idx === quizResult.selected,
+                                    'opacity-50 border-gray-200 dark:border-gray-700 cursor-not-allowed': quizAnswered && (idx !== quizResult?.correct_index && idx !== quizResult?.selected)
+                                }">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border"
+                                        :class="{
+                                            'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300': !quizAnswered,
+                                            'bg-emerald-500 text-white border-emerald-500': quizAnswered && quizResult && idx === quizResult.correct_index,
+                                            'bg-red-500 text-white border-red-500': quizAnswered && quizResult && !quizResult.is_correct && idx === quizResult.selected,
+                                            'bg-gray-100 text-gray-400': quizAnswered && idx !== quizResult?.correct_index && idx !== quizResult?.selected
+                                        }"
+                                        x-text="['A', 'B', 'C', 'D'][idx]"></span>
+                                    <span x-text="option"></span>
+                                </div>
+                                <template x-if="quizAnswered && quizResult">
+                                    <span x-text="idx === quizResult.correct_index ? '✅ Benar' : (idx === quizResult.selected ? '❌ Salah' : '')" class="text-xs font-black"></span>
+                                </template>
+                            </button>
+                        </template>
+                    </div>
+
+                    {{-- Penjelasan Edukatif & Feedback setelah Menjawab --}}
+                    <template x-if="quizAnswered && quizResult">
+                        <div class="space-y-3 pt-2">
+                            <div class="p-3.5 rounded-2xl border"
+                                :class="quizResult.is_correct ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 text-emerald-900 dark:text-emerald-200' : 'bg-red-50 dark:bg-red-900/30 border-red-300 text-red-900 dark:text-red-200'">
+                                <div class="flex items-center gap-2 mb-1.5 font-black text-xs">
+                                    <span x-text="quizResult.is_correct ? '🎉 Hebat! Jawaban Kamu Benar!' : '💡 Kunci Jawaban & Fakta Edukatif:'"></span>
+                                </div>
+                                <p class="text-xs leading-relaxed" x-text="quizResult.explanation"></p>
+                                <div class="mt-2 text-[11px] font-bold"
+                                    :class="quizResult.is_correct ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'">
+                                    <span x-text="quizResult.is_correct ? '🛡️ Bonus aktif: Laju penurunan kesabaran berkurang 50% selama 10 detik!' : '⚡ Penalti aktif: Kesabaran berkurang 1.5x lebih cepat selama 5 detik!'"></span>
+                                </div>
+                            </div>
+
+                            <button @click="closeQuizModal()"
+                                class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 rounded-xl text-xs shadow transition cursor-pointer">
+                                Lanjutkan Bermain 🚀
+                            </button>
+                        </div>
+                    </template>
                 </div>
             </template>
         </div>
@@ -634,10 +904,54 @@
         </div>
     </div>
 
+    <style>
+        @keyframes speedBonusFloatUp {
+            0%   { opacity: 0; transform: translate(-50%, 16px) scale(0.9); }
+            15%  { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
+            80%  { opacity: 1; transform: translate(-50%, -22px) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -40px) scale(0.96); }
+        }
+        .animate-speed-bonus {
+            animation: speedBonusFloatUp 2.6s ease-out forwards;
+        }
+    </style>
+    <div x-show="speedBonusFloat" x-cloak data-testid="speed-bonus-floating"
+        class="fixed top-28 left-1/2 z-50 pointer-events-none animate-speed-bonus">
+        <div class="bg-gradient-to-r from-emerald-500 via-green-500 to-amber-400 text-white px-6 py-3 rounded-2xl shadow-2xl border-2 border-white/80 text-center">
+            <div class="text-xl font-black tracking-wide drop-shadow" x-text="speedBonusFloat ? `⚡ ${speedBonusFloat.label}` : '+Speed Bonus!'">+Speed Bonus!</div>
+            <div class="text-xs font-extrabold text-amber-50 mt-0.5 flex items-center justify-center gap-3">
+                <span x-text="speedBonusFloat ? `💰 +${speedBonusFloat.bonus_coins} Koin` : ''"></span>
+                <span x-text="speedBonusFloat ? `🏆 +${speedBonusFloat.bonus_score} Skor` : ''"></span>
+            </div>
+        </div>
+    </div>
+
+    {{-- Reward Popup (Sukses Penyerahan + Bonus Kesabaran) --}}
+    <div x-show="rewardPopup" x-cloak x-transition data-testid="reward-popup" class="fixed top-20 right-6 z-50 bg-gradient-to-br from-amber-400 to-amber-500 text-gray-900 rounded-2xl p-4 shadow-2xl max-w-xs animate-bounce">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl">🎉</span>
+            <div>
+                <span class="font-black text-sm block" x-text="rewardPopup && rewardPopup.speed_bonus_awarded ? '⚡ +Speed Bonus!' : 'Reward Diterima!'"></span>
+                <span class="text-xs font-bold block" x-text="rewardPopup ? `💰 +${rewardPopup.coins} Koin  🌱 +${rewardPopup.eco_points} Eco` : ''"></span>
+            </div>
+        </div>
+    </div>
+
+    {{-- Penalty Popup (Pelanggan Pergi Karena Kesabaran Habis) --}}
+    <div x-show="penaltyPopup" x-cloak x-transition data-testid="penalty-popup" class="fixed top-40 right-6 z-50 bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-2xl p-4 shadow-2xl max-w-xs border border-red-300">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl">😤</span>
+            <div>
+                <span class="font-black text-sm block" x-text="penaltyPopup ? `${penaltyPopup.customer} Pergi!` : 'Pelanggan Pergi!'"></span>
+                <span class="text-xs font-bold text-red-100 block" x-text="penaltyPopup ? `Penalti: -${penaltyPopup.coins} Koin  -${penaltyPopup.eco_points} Eco  -${penaltyPopup.score} Skor` : ''"></span>
+            </div>
+        </div>
+    </div>
+
     {{-- MODAL REKAPITULASI SKOR STAGE --}}
-    <div x-show="stageEnded" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+    <div data-testid="stage-score-recap" x-show="stageEnded" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
         <div class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-sm w-full p-5 text-center space-y-3 border-2 border-emerald-500">
-            <h3 class="text-xl font-black text-gray-800 dark:text-white">⏰ Stage Selesai!</h3>
+            <h3 class="text-xl font-black text-gray-800 dark:text-white">⏰ Stage Selesai! Rekapitulasi Skor</h3>
             <div class="p-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 text-white">
                 <span class="text-[10px] uppercase font-bold block">Total Skor</span>
                 <span class="text-3xl font-black font-mono" x-text="stageRecap ? stageRecap.total_score : 0"></span>

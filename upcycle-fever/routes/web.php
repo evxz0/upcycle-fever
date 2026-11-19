@@ -6,6 +6,7 @@ use App\Http\Controllers\MaterialController;
 use App\Http\Controllers\CraftingController;
 use App\Http\Controllers\ServingController;
 use App\Http\Controllers\StageController;
+use App\Http\Controllers\QuizController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\InventoryController;
 use Illuminate\Support\Facades\Route;
@@ -42,6 +43,11 @@ Route::prefix('api')->name('api.')->group(function () {
     Route::post('/game/stage/start', [StageController::class, 'apiStart'])->name('game.stage.start');
     Route::post('/game/stage/spawn', [StageController::class, 'apiSpawnOrder'])->name('game.stage.spawn');
     Route::post('/game/stage/finish', [StageController::class, 'apiFinish'])->name('game.stage.finish');
+
+    // F-05: Kuis SDG 12 Pelanggan Spesial (PBI-013, PBI-014, PBI-015)
+    Route::get('/game/quiz/question', [QuizController::class, 'apiGetQuestion'])->name('game.quiz.question');
+    Route::post('/game/quiz/answer', [QuizController::class, 'apiSubmitAnswer'])->name('game.quiz.answer');
+    Route::get('/game/quiz/config', [QuizController::class, 'apiGetConfig'])->name('game.quiz.config');
 
     // F-01: Profile API (JSON) untuk integrasi frontend
     Route::middleware('auth')->group(function () {
